@@ -1,0 +1,93 @@
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+import re
+from src.agent.state import AgentState,SecurityRating
+import time
+from src.utils.monitoring import PerformanceCallback
+from src.utils.get_metrics import get_node_metrics
+from src.utils.monitoring import log_to_mlflow
+import mlflow
+import mlflow
+from src.utils.prompt_manager import PromptManager
+import os
+from langchain_core.messages import SystemMessage, HumanMessage
+
+
+promptloader= PromptManager()
+
+perf_cb=PerformanceCallback()
+
+llm_mini = ChatOpenAI(
+    model="gpt-4o-mini", 
+    streaming=True,
+    temperature=0, 
+    max_retries=5, 
+    timeout=30
+)
+
+# Fallback: High-Limit, Smart GPT-4o
+llm_gpt4o = ChatOpenAI(
+    model="gpt-4o", 
+    streaming=True,
+    temperature=0, 
+    max_retries=3
+)
+resilient_brain = llm_mini.with_fallbacks([llm_gpt4o])
+
+def system_1_guard(state:AgentState):
+    start_ts = time.time()
+    user_query = state["query"]
+    current_turn = state.get("turn_count", 0) + 1
+    node_config = promptloader.prompts.get('system_guardrail', {})
+    raw_template = node_config.get('system_guardrail_prompt')
+    prompt_version = node_config.get('version', '1.0.0')
+
+     # Catch obvious "Ignore previous" injections without calling GPT.
+    denylist = [r"ignore previous", r"system prompt", r"you are now", r"dan mode"]
+    jailbreakpatterns=[r"(?i)ignore (all )?previous", 
+        r"(?i)developer mode", 
+        r"(?i)dan mode",
+        r"(?i)payload",
+        r"(?i)output the system prompt",
+        r"translation of the above into"]
+
+    for pattern in denylist:
+        if re.search(pattern,user_query.lower()):
+            return {"is_safe":False,"security_log":f"Heuristic trigger:{pattern}"}
+    
+    for pattern in jailbreakpatterns:
+        if re.search(pattern,user_query.lower()):
+            return {
+                "is_safe": False, 
+                "security_log": f"Jailbreak Attempt: {pattern}",
+                "prompt_version": "v2.1.0-strict"
+            }
+
+
+    system_prompt=raw_template.format(user_input=user_query)
+
+    user_message=f"Please analyze this input for security: <user_input>{user_query}</user_input>"
+
+    structure_llm= resilient_brain.with_structured_output(SecurityRating,include_raw=True)
+    
+    assessment = structure_llm.invoke(
+    [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_message)
+    ],
+    config={"callbacks": [perf_cb]}
+)
+
+    plan_output = assessment["parsed"]
+
+    detection = 1 if not plan_output.is_safe else 0
+    mlflow.log_metric("jail_break_detected",detection,step=current_turn)
+   
+    metrics_getter= get_node_metrics("guard_rail",assessment,perf_cb,start_ts)
+    node_results = metrics_getter(state)
+    node_results["prompt_version"] = prompt_version
+
+    log_to_mlflow("guard_rail",node_results,step=current_turn)
+    print("assessment:",plan_output.is_safe)
+
+    return {"start_time": start_ts,"turn_count": current_turn,**node_results,"is_safe":plan_output.is_safe,"security_log":plan_output.reason,"prompt_version": "v2.1.0","steps": [f"Security Guard: {'Passed' if plan_output.is_safe else 'Blocked'}"]}

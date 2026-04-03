@@ -1,0 +1,49 @@
+# --- Core Agentic Framework ---
+langgraph
+langgraph-checkpoint-postgres
+langchain-community
+langchain_openai
+pydantic
+python-dotenv
+
+# --- Database & Persistence ---
+psycopg[binary]
+qdrant_client
+chromadb
+langchain_qdrant
+redis
+
+# --- Web API (Add these for your app.py) ---
+fastapi
+uvicorn
+python-multipart
+
+# --- Agent Ops & Observability ---
+mlflow
+ragas
+datasets
+docker
+
+# --- Data Processing & NLP ---
+docling>=2.0.0
+pypdf
+pandas
+langchain-text-splitters
+spacy
+presidio-analyzer
+presidio-anonymizer
+deepsearch-glm
+
+# --- Embeddings & Reranking ---
+sentence-transformers
+langchain_huggingface
+flashrank
+fastembed
+
+# --- Infrastructure & Async ---
+llama_cloud>=1.0
+aiohttp
+asyncio
+dvc
+psutil
+deepeval

@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Data (ignore all raw/intermediate data)
+data/masked
+data/extracted_md/
+data/ground_truth
+data/dead_letter_queue
+
+
+# OS
+.DS_Store
+Thumbs.db
+
+mlruns/
+.cache/
+*.onnx
