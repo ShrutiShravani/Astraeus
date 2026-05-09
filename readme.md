@@ -274,10 +274,10 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
     docker compose up -d
 
 #### 6. Run the Data Pipeline :
-   **first run data pipeline using dvc repro (data extraction to chunking and saving in qdrant)**
+   * first run data pipeline using dvc repro (data extraction to chunking and saving in qdrant)
 
 
-   **This will automatically save the generated vectors into your Qdrant instance.**
+   * This will automatically save the generated vectors into your Qdrant instance.
 
 
 #### 7. Run main application to test:
@@ -288,7 +288,7 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
   uvicorn app:app --host 0.0.0.0 --port 8001 --loop asyncio --reload
 
 
-#### 8. set of queries to test:
+#### 8. Set of queries to test:
 **Type A**
 *  Calculate Nike's Gross Margin for 2022 .
    Follow up query: Extract the Gross Margin for Fiscal 2021 and compare it against the 2022 figure.
