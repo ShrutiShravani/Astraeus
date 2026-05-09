@@ -197,58 +197,87 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
 
 # How to run
 
-### Configure Environment Variables
-**Create a new .env file and set up your below credentials**
+### 1. Configure Environment Variables
 
-OPENAI_API_KEY="YOUR KEY"
+   Create a `.env` file in the root directory and populate it with your specific service credentials.
+
+    * ```env
+    # Intelligence
+
+    OPENAI_API_KEY="YOUR_KEY"
+
+    # Agentic Tracing (LangSmith)
+
+    LANGCHAIN_TRACING_V2="true"
+
+    LANGCHAIN_ENDPOINT="[https://api.smith.langchain.com](https://api.smith.langchain.com)"
+
+    LANGCHAIN_PROJECT="your_project"
+
+    LANGCHAIN_API_KEY="your_api"
+
+    # Database & State (PostgreSQL)
+
+    POSTGRES_USER="YOUR_USER"
+
+    POSTGRES_PASSWORD="YOUR_PASSWORD"
+
+    POSTGRES_DB="YOUR_DATABASE"
+
+    DB_URI="YOUR_DB_URI"
+
+    # Semantic Cache & Storage
+
+    CHROMA_HOST="localhost"
+
+    CHROMA_PORT=8000
+
+    DATA_DIR="data/"
+
+    # Experiment Tracking (MLflow)
+
+    MLFLOW_TRACKING_URI="YOUR_MLFLOW_TRACKING_URI"
 
 
-LANGCHAIN_TRACING_V2 = "true"
-LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
-LANGCHAIN_PROJECT = "your_project"
-LANGCHAIN_API_KEY = "your_api"
+**Note: Set up mlflow,langchain,prometheus,qdrant,llm api keys(gpt-40 and gpt-4o-mini),chroma and postgres checkpoints using your own credentials**
 
-POSTGRES_USER="YOUR_USER"
-POSTGRES_PASSWORD="YOUR_PASSWORD"
-POSTGRES_DB="YOUR_DATABASE"
-CHROMA_HOST=localhost
-CHROMA_PORT=8000
 
-DB_URI = "YOUR_DB_URI"
+#### 2. Critical Configuration
 
-DATA_DIR ="data/"
-
-MLFLOW_TRACKING_URI="YOUR_MLFLOW_TRACKING_URI"
-
-**Set up mlflow,langchain,prometheus,qdrant,llm api keys(gpt-40 and gpt-4o-mini),chroma and checkpoints using your own credentials**
-
-#### ⚠️ Critical Configuration
 **NOTE- IN PORMETHEUS.YML MAKE SURE YOU ARE SETTING YOUR OWN LOCAL HOST/FAST API AS TARGET**
-    ```yaml
+
+    - ```yaml
     - targets: ["YOUR_HOST:8001"]  # Points to your FastAPI
 
 
-#### Clone the repository
-** git clone <repo_url>
-cd Astraeus 
+
+#### 3. Clone the repository
+
+    **git clone <repo_url>**
+    **cd Astraeus**
 
 
-#### Install Dependencies
+
+#### 4. Install Dependencies
+
 **pip install -r requirements.txt**
 
 
-#### Start Infrasructure services
+
+#### 5. Start Infrasructure services
+
 **Install Docker Desktop and start the required services:**
 
     * ```bash
     docker compose up -d
 
-#### Run the Data Pipeline
+#### 6. Run the Data Pipeline
 **first run data pipeline using dvc repro (data extraction to chunking and saving in qdrant)**
+
 **This will automatically save the generated vectors into your Qdrant instance.**
 
 
-#### Run main application to test
+#### 7. Run main application to test
   **Option A**: 
   python main.py
 
@@ -256,24 +285,24 @@ cd Astraeus
   uvicorn app:app --host 0.0.0.0 --port 8001 --loop asyncio --reload
 
 
-#### set of queries to test:
+#### 8. set of queries to test:
 **Type A**
-*  1. Calculate Nike's Gross Margin for 2022 .
+*  Calculate Nike's Gross Margin for 2022 .
    Follow up query: Extract the Gross Margin for Fiscal 2021 and compare it against the 2022 figure.
-*  2. Management claims the 120 bps increase in Gross Margin was due to 'NIKE Direct' and 'full-price sales.' Cross-reference this with the 'Inventory' levels in the 10-K.
-*  3. Calculate the percentage change in Nike's 'Cash and Equivalents' between FY2019 and FY2020 to determine the liquidity buffer built during the pandemic.
+*  Management claims the 120 bps increase in Gross Margin was due to 'NIKE Direct' and 'full-price sales.' Cross-reference this with the 'Inventory' levels in the 10-K.
+*  Calculate the percentage change in Nike's 'Cash and Equivalents' between FY2019 and FY2020 to determine the liquidity buffer built during the pandemic.
 
 **Type B**
-*  1. Identify management's discussion on 'Nike Direct' growth and digital consumer connections during the 2020 global store shutdown period.
-*  2. how did the 'temporary closure of nearly all Nike's stores outside of Greater China' specifically impact Nike's investment in digital capabilities and the Nike App?
+*  Identify management's discussion on 'Nike Direct' growth and digital consumer connections during the 2020 global store shutdown period.
+*  how did the 'temporary closure of nearly all Nike's stores outside of Greater China' specifically impact Nike's investment in digital capabilities and the Nike App?
     Follow up Query :Given the $10.7 billion digital sales achieved in 2022, cross-reference this with the 2022 10-K 'Operating Overhead' section. Does management attribute the 80 basis point decline in gross margin specifically to these digital investments, or were logistics and freight the primary drivers?
 
 **Type C**
-* 1. Analyze the divergence between Nike's management’s claim of a 'digital step-function change' in the 2020 Transcript and the reported 
+*  Analyze the divergence between Nike's management’s claim of a 'digital step-function change' in the 2020 Transcript and the reported 
      820 basis point drop in gross margin in the 2020 10-K
-* 2. Nike's Management discusses 'digital acceleration' in the 2020 transcript. Cross-reference the digital sales growth claims with the 
+*  Nike's Management discusses 'digital acceleration' in the 2020 transcript. Cross-reference the digital sales growth claims with the 
       actual 'NIKE Direct' revenue line in the 10-K.
-* 3. Given the 49% digital growth identified in 2020, cross-reference the 2020 10-K 'Gross Margin' explanation with management's 'digital 
+*  Given the 49% digital growth identified in 2020, cross-reference the 2020 10-K 'Gross Margin' explanation with management's 'digital 
      acceleration' narrative. Does the 10-K attribute the 130 basis point margin contraction to higher digital fulfillment costs, and did management mention this 'profitability trade-off' in the transcript?
 
      FOLLOW UP QUERY:Compare the Nike's 2020 claim that digital is 'financially accretive' with the 2021 10-K 'Selling and Administrative Expense' section. Identify if the increase in demand creation and operating overhead suggests that while digital is 'accretive' on a gross level, it is actually dilutive to operating income due to higher marketing and tech spend
