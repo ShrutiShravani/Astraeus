@@ -23,6 +23,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from src.utils import monitoring
+from langchain_community.callbacks import get_openai_callback
 
 # 1. Define the Limiter (identifies users by IP address)
 limiter = Limiter(key_func=get_remote_address)
@@ -208,9 +209,9 @@ async def start_audit(data: AuditInput,request:Request):
             "status": current_state.values.get("audit_status", "AWAITING_REVIEW"),
             "menu_options": {
                 "1": "pass",
-                "2": "Correct Manually",
-                "3": "Investigate"}
+                "2": "Correct Manually"
             }
+        }
     
 
 @app.post("/audit/review")
