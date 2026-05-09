@@ -1,5 +1,4 @@
 import json
-import numpy as np
 from collections import defaultdict
 
 def generate_report(file_path="audit_trail.jsonl"):

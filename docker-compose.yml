@@ -45,6 +45,24 @@ services:
     networks:
       - audit_network
 
+  promtheus:
+    image: prom/prometheus:latest
+    container_name: audit_prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # Allows Docker to see your local FastAPI
+    networks:
+      - audit_network
+
+
 # --- CRITICAL: Declare the volumes and network ---
 volumes:
   pg_data:

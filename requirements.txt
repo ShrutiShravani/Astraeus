@@ -47,3 +47,5 @@ asyncio
 dvc
 psutil
 deepeval
+promtheus-client
+slowapi

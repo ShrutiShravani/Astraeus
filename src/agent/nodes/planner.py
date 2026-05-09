@@ -30,54 +30,107 @@ def planner_node(state:AgentState):
     current_query = state["query"]
     current_turn = state.get("turn_count", 0) + 1
     history = state.get("query_history", [])
-    prev_company = state.get("target_company")
-    prev_year = state.get("target_year")
+    prev_company = state.get("target_company",[])
+    print(prev_company)
+    prev_year = state.get("target_year",[])
+    print(prev_year)
+    #current_existing_report = state.get("report_history", "")
+    is_follow_up=state.get("is_follow_up")
+    planner_instruction = ""
+    """
+    if current_existing_report:
+       existing_report= [current_existing_report[-1]] 
+    else:
+        existing_report = "No previous summary found. Treat this as a new investigation."
+    """
+    if state.get("human_decision") == "is_investigate":
+        # Keep only the relevant context
+        history = [history[-1]] if history else []  
+        planner_instruction = f"INVESTIGATE MODE:You are analyzing a thread of financial investigation.History of queries {history}.This was for {prev_company} {prev_year}."
+      
+    else:
+        history = [] # Clean slate
+        planner_instruction = "You are starting a fresh forensic audit."
+
     retrieved_feedback= state.get("retriever_feedback",[])
+    print(retrieved_feedback)
     node_config = promptloader.prompts.get('planner', {})
     raw_template = node_config.get('planner_prompt')
     prompt_version = node_config.get('version', '1.0.0')
-    planner_instruction = ""
-
+    audit_wiki=state.get("audit_wiki","")
+    already_verified_facts= ",".join([f"Year: {item.year} | Company: {item.company} | Task: {item.task_name} | Evidence :{item.evidence} in {item.source} p.{item.page} {item.quote}"for item in audit_wiki])
+    
     if retrieved_feedback:
         planner_instruction=f"""
-        You are in a REVISION LOOP because the previous retrieval failed audit.
-    ### REVISION MODE: TARGETED CORRECTION
-    You are correcting a failed retrieval for the CURRENT query: "{state.get('query')}".
-    The Auditor found a gap in the evidence.
-    
-    LAST AUDIT CRITIQUE:  {retrieved_feedback.retriever_critique}
+        
+        You are in a recovery loop. Your goal is NOT to solve the whole query, but to solve the **[RETRIEVAL_GAP]** identified by the Auditor.
 
-    INSTRUCTION:
-    1. Do NOT change the Target Company or Year. Keep Company: {prev_company} and Year: {prev_year}.
-    2. Broaden keywords or shift Zones as requested by the Auditor.
-    2. Change the 'Keywords' or 'Zone' specifically to address the [RETRIEVAL_GAP].
-    3. If the Auditor said 'Transcript is missing', your NEW plan must have a Transcript task.
+        **STATE KNOWLEDGE (The "Settled Law"):**
+        - COMPLETED DATA: {audit_wiki} 
+        - STOP: Do NOT generate tasks for the metrics listed above. They are already verified.
+        - Do not create tasks for complete {current_query}
 
-    DIRECTIONS:
-    1. If the critique says 'Missing doc_source', you MUST add a task where doc_source='Transcript'or "10K".
-    2. If the critique says 'Missing specific line item', you MUST broaden your keywords or target the specific 'Item' (e.g., Item 8 for tables).
-    3. Do NOT simply repeat the old plan. If you repeat the old plan, the audit will fail again.
-    
+        **THE GAP (Your Only Objective):**
+        - AUDIT CRITIQUE: {retrieved_feedback.retriever_critique}
+
+        **INSTRUCTIONS FOR TASK GENERATION:**
+        1. **Targeted Execution:** Rewrite tasks to focus ONLY on the missing {prev_company} {prev_year} data mentioned in the Critique.
+        2. **Zone Intelligence:** If a line item was missing, shift 'Zone' (e.g., from 'Narrative' to 'Financial Tables' or 'Item 8').
+        3. **Keyword Expansion:** If previous keywords failed, use synonyms or broader industry terms (e.g., instead of 'Inventory', use 'Current Assets' or 'Supply Chain').
+        4. **Constraint:** Maintain Company: {prev_company} and Year: {prev_year}. Do NOT deviate.
+
+        **DIRECTIONS:**
+        - If the Auditor flagged a missing doc_source (Transcript/10K), the NEW plan MUST prioritize that source.
+        - Do NOT repeat the previous plan exactly. Change the strategy (Keywords/Zone) or the audit will fail again.
+            
     """
-    if len(history) > 1:
+        
+    elif is_follow_up:
+        # --- FOLLOW-UP/INVESTIGATE STATE (The Fix for your Hallucinations) ---
+        purifier_prompt = f"""
+        Compare the User Query: "{current_query}" 
+        With Verified Facts: {already_verified_facts}
+        
+        TASK: Resolve all pronouns and identify the 'Knowledge Gap'.
+        1. If a value is in the Wiki, replace the name with 'NAME (VALUE)'.
+        2. If a value is MISSING, mark it as 'REQUIRED_FROM_SOURCE'.
+        
+        Example: "Compare 2019 margin to 2020." 
+        -> "Compare verified 2019 Margin (40%) with REQUIRED_FROM_SOURCE 2020 Margin."
+        
+        """
+        # We use the mini model to just do the 'Cleanup'
+        current_query = llm_mini.invoke(purifier_prompt).content
+        
+        # --- THE ACTUAL INSTRUCTION ---
+        planner_instruction = f"""
+        FOLLOW-UP MODE: You are extending an already existing audit.
+        - VERIFIED DATA: {already_verified_facts}.
+        - You have received a purified query: {current_query}
+        - Values in ( ) are verified. DO NOT fetch them.
+        - Values marked [REQUIRED_FROM_SOURCE] must have a new task created.
+        
+        """
+    else:
+        planner_instruction=f"Analyze the user query,classify a financial query type and  build a comprehensive step by step task plan."
+        
+    if len(history) > 5:
+        print("length exceeded")
         return {
             "target_node": "END", # Or route to a 'limit_exceeded' node
             "steps": ["RECURSION_LIMIT: Max follow-up depth reached (2/2)."]
         }
-    existing_report = state.get("generation", "No previous report exists.")
-    if "1. EXECUTIVE SUMMARY" in existing_report:
-        existing_report.split("1. EXECUTIVE SUMMARY")[-1].split("2. ANALYSIS")[0]
-    else:
-        report_summary = "No previous summary found. Treat this as a new investigation."
-
+  
     structured_planner= resilient_brain.with_structured_output(Planner,include_raw=True)
     planner_prompt  = raw_template.format(
         planner_instruction=planner_instruction,
         history=history,
-        report_summary=report_summary,
+        report_summary="DEPRECATED: Refer to audit_wiki for facts",
         current_query=current_query,
+        audit_wiki=already_verified_facts, # <--- THIS IS THE "FACT BRIDGE"
+        locked_company=prev_company,
+        locked_year=prev_year
         )
-
    
     # Invoke the LLM directly with the string
     raw_result = structured_planner.invoke(planner_prompt,config={"callbacks": [perf_cb]})
@@ -92,14 +145,15 @@ def planner_node(state:AgentState):
 
     #JOIN ALL TASKS 
     task_rationales="|".join([t.rationale for t in plan_output.tasks])
+    all_extracted_year=list(set([t.extracted_year for t in plan_output.tasks]))
+    all_extracted_company=list(set([t.extracted_company for t in plan_output.tasks]))
     node_results = metrics_getter(state)
     node_results["prompt_version"] = prompt_version
 
     log_to_mlflow("planner",node_results,step=current_turn)
  
     print(plan_output)
-    print(plan_output.extracted_company.upper())
-    print(plan_output.extracted_year)
+
   
     return {
         "plan": plan_output.tasks,
@@ -107,8 +161,8 @@ def planner_node(state:AgentState):
 
         **node_results,
         "type": plan_output.type,
-        "target_company": plan_output.extracted_company.upper(), # Ensure this isn't None!
-        "target_year": plan_output.extracted_year,
+        "target_company": all_extracted_company, # Ensure this isn't None!
+        "target_year":  all_extracted_year,
         "steps": ["Created search plan for query: " + state["query"],f"query_type:{plan_output.type}",f"Audit Strategy: {plan_output.reasoning}", 
             f"Task Logic: {task_rationales}"]
     }

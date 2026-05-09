@@ -6,6 +6,15 @@ def python_repl_node(state:AgentState):
     start_ts=time.time()
     plan= state["math_plan"]
     current_turn = state.get("turn_count", 0) + 1
+    node_metrics = {
+        "node_benchmarks": {
+            "python_repl": {
+                "ttft": 0, "latency": 0, "input_tokens": 0, "output_tokens": 0,
+                "tokens": 0, "cost": 0.0, "model": "python-3.11-exec", "tps": 0
+            }
+        }
+    }
+
     #prepare the sanbox environment
     #we create dictionary of variables based on the extrcated metrics
    
@@ -24,21 +33,7 @@ def python_repl_node(state:AgentState):
         print(f"python_formula:{plan.python_formula}")
         
         node_latency= time.time()-start_ts
-        node_metrics = {
-        "node_benchmarks": {
-            "python_repl": {
-                "ttft": 0,  # No tokens in Python
-                "latency": round(node_latency, 3),
-                "input_tokens":0,
-                "output_tokens":0,
-                "tokens": 0,
-                "cost": 0.0,
-                "model": "python-3.11-exec", # Log the 'engine' instead of LLM
-                "tps": 0
-            }
-        }
-    }
-        
+        node_metrics["node_benchmarks"]["python_repl"]["latency"] = round(node_latency, 3)
         node_metrics["prompt_version"] = "v1.1.0"
         log_to_mlflow("python_repl", node_metrics, step=current_turn)
 

@@ -23,6 +23,10 @@ def route_after_auditor(state:AgentState):
 def route_after_planner(state: AgentState):
     if state.get("target_node")=="END":
         return "end"
+    if  len(state["plan"])==0:
+        print("--- ROUTE: Direct to Generator (Wiki Match) ---")
+        return "generator"
+
     
     return "retriever"
 
@@ -34,7 +38,7 @@ def route_after_retriever_auditor(state: AgentState):
     query_type = state["type"]
 
     if needs_revision:
-        if attempts>=2:
+        if attempts>2:
             return "human_review"
         print(f"--- RETRIEVER REJECTED (Attempt {attempts}): LOOPING TO PLANNER ---")
         return "planner"
@@ -46,23 +50,28 @@ def route_after_retriever_auditor(state: AgentState):
         
     return "extractor"
     
+def route_cache(state):
+    val = state.get("is_cached", False)
+    print(val)
 
-
+    if val is True:
+        return "hit"
+    else:
+        print("continue to planner")
+        return "continue"
+    
 
 def route_after_human(state:AgentState):
     decision=state.get("human_decision")
     #status=state.get("audit_status")
-    if decision=="pass":
-        if state.get("is_cached") is True:
-            return "end"
-        return "cache_add"
-    elif decision=="reject":
-        return "generator"
-    elif decision=="refinement":
-        return "planner"
-    elif decision=="investigate":
+    if decision=="is_investigate" or decision == "refinement":
         return "guard"
+        
+    if decision == "pass":
+        return "cache_add"
+
     return "end"
+        
 
 #define the workflow
 workflow=StateGraph(AgentState)
@@ -93,7 +102,7 @@ workflow.add_conditional_edges(
 
 workflow.add_conditional_edges(
     "cache_check",
-    lambda state: "hit" if state.get("is_cached") else "continue",
+    route_cache,
     {
         "hit": "human_review",
         "continue": "planner"
@@ -123,8 +132,7 @@ workflow.add_conditional_edges(
     "human_review",
     route_after_human,
     {    
-        "generator": "generator",
-        "cache_check": "guard", # NEW: Links 'investigate' to the cache node
+        "guard": "guard", # NEW: Links 'investigate' to the cache node
         "cache_add": "cache_add",
         "end": END
     }
@@ -135,6 +143,7 @@ workflow.add_conditional_edges(
     route_after_planner,
     {    
         "retriever": "retriever",
+        "generator":"generator",
         "end": END
     }
 )

@@ -13,14 +13,15 @@ def semantic_cache_check_node(state:AgentState):
     start_ts= time.time()
     print("checking for cache")
     current_turn = state.get("turn_count", 0) + 1
-    history = state.get("query_history", [])
-    search_string = " | ".join(history) 
-    if not search_string:
+    query = state.get("query", [])
+    
+    #search_string = " | ".join(history) 
+    if not query:
         print("is_cached:False")
         return {"is_cached": False}
     
     
-    query_embedding = embeddings.embed_query(search_string)
+    query_embedding = embeddings.embed_query(query)
     
     latency= round(time.time()-start_ts,3)
     
@@ -37,6 +38,7 @@ def semantic_cache_check_node(state:AgentState):
     if results["distances"][0] and results["distances"][0][0] < 0.10:  # 95% similarity
         cached_report = results["documents"][0][0]
         print("--- CACHE HIT: Bypassing LLM Nodes ---")
+      
         node_metrics = {
         "node_benchmarks": {
             "python_repl": {
@@ -51,7 +53,7 @@ def semantic_cache_check_node(state:AgentState):
             }
         }
     }
-        log_to_mlflow("semantci_Cache", node_metrics, step=current_turn)
+        log_to_mlflow("semantic_Cache", node_metrics, step=current_turn)
         return {
             "generation": cached_report,
             "turn_count": current_turn,

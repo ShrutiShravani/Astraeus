@@ -1,0 +1,11 @@
+groups:
+- name: AgentAlerts
+  rules:
+  - alert: HighTailLatency
+    expr: histogram_quantile(0.99,sum(rate(audit_node_latency_seconds_bucket[5m]))by (le))>45
+    for : 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High Latency on Audit Agent"
+      description: "P99 latency is currently {{ $value }}s, which exceeds the 60s limit."

@@ -1,3 +1,4 @@
+from sympy.solvers.ode.systems import _match_second_order_type
 from qdrant_client import models
 from src.agent.state import AgentState
 from flashrank import Ranker, RerankRequest
@@ -32,12 +33,69 @@ def forensic_cache_key(state:AgentState):
     return hashlib.md5(key_str.lower().strip().encode()).hexdigest()
 """
 
+def pre_filtering(initial_chunks, planner_tasks):
+    scored_chunks = []
+    
+    for chunk in initial_chunks:
+        # 1. Prepare chunk text once for efficiency
+        text = chunk["evidence"].lower()
+        max_overall_score = 0
+        
+        for task in planner_tasks:
+            title = task.title.lower()
+            
+            # 2. Extract Year and Significant Words (Magnets)
+            years_in_task = set(re.findall(r'\b(20\d{2})\b', title))
+            # Get all words 4+ chars, excluding the year itself
+            task_words = set(re.findall(r'\b[a-z]{4,}\b', title)) - years_in_task
+            
+            # 3. Calculate the Cluster Match (Intersection)
+            matched_words = [w for w in task_words if w in text]
+            match_count = len(matched_words)
+            
+            current_task_score = 0
+            
+            # 4. SCORING LOGIC (The "Senior" Threshold)
+            # We only give a major boost if a Year matches AND we have a cluster of keywords
+            year_match = any(y in text for y in years_in_task) if years_in_task else True
+            
+            if year_match:
+                if match_count >= 3:
+                    # CLUSTER HIT: This is likely the exact paragraph/table row
+                    current_task_score = 100 + match_count
+                elif match_count >= 1:
+                    # PARTIAL HIT: Right year, but maybe not the exact metric
+                    current_task_score = 50 + match_count
+                else:
+                    # YEAR ONLY: Only the year matched
+                    current_task_score = 10
+            else:
+                # NO YEAR MATCH: Worth very little in a forensic query
+                current_task_score = match_count
+
+            # Keep the highest score this chunk achieved against any task
+            if current_task_score > max_overall_score:
+                max_overall_score = current_task_score
+        
+        scored_chunks.append((max_overall_score, chunk))
+
+    # 5. SORT AND PICK THE TOP 4
+    # Sort by score descending (highest first)
+    scored_chunks.sort(key=lambda x: x[0], reverse=True)
+
+    # Logging for your debugging
+    top_scores = [s[0] for s in scored_chunks[:4]]
+    print(f"DEBUG: Top 4 Scores: {top_scores}")
+    
+    # Return the best 4. Even if none hit the '100' threshold, 
+    # it still returns the 4 'best available' to prevent zero-chunk errors.
+    return [item[1] for item in scored_chunks[:4]]
+
 def hybrid_retriever_node(state: AgentState):
     start_ts = time.time()
     query = state["query"]
     plan = state.get("plan", [])
     current_turn = state.get("turn_count", 0) + 1
-    reflection = state.get("reflection_feedback")
     target_company = str(state.get("target_company", "")).upper()
     target_year = state.get("target_year")
   
@@ -58,50 +116,31 @@ def hybrid_retriever_node(state: AgentState):
     all_contexts = []
     seen_ids = set()
 
-    critique_text = f"{reflection.critique}" if (reflection and reflection.needs_revision and reflection.target_node=="retriever") else ""
     
     # --- 2. DYNAMIC YEAR FILTERING (UNIVERSAL) ---
-    filter_text = (" ".join(t.title for t in plan) if plan else query) + critique_text
+    filter_text = (" ".join(t.title for t in plan) if plan else query) 
     found_years = [int(y) for y in re.findall(r'\b(20\d{2})\b', filter_text)]
     
+
     for task_obj in plan:
         search_string = task_obj.title
-        if critique_text:
-            search_string = f"{search_string} focus on {critique_text}"# Add critique as a standalone search
+        task_company = task_obj.extracted_company
+        print(task_company)
+        task_year = task_obj.extracted_year
+        print(task_year)
+    
     
         filter_conditions = []
         
-        if target_company:
+        if task_company:
             filter_conditions.append(
-                models.FieldCondition(key="metadata.company", match=models.MatchValue(value=target_company))
+                models.FieldCondition(key="metadata.company", match=models.MatchValue(value=task_company))
             )
+       
 
-        if found_years:
-            if reflection and reflection.needs_revision and "missing" in reflection.critique.lower():
-                filter_conditions.append(
-                    models.FieldCondition(key="metadata.year", match=models.MatchAny(any=[max(found_years)]))
-                )
-            else:
-                max_y, min_y = max(found_years), min(found_years)
-                if (max_y - min_y) <= 2:
-                    # Standard 3-year SEC window: Target the latest document
-                    filter_conditions.append(
-                        models.FieldCondition(key="metadata.year", match=models.MatchValue(value=max_y))
-                    )
-                else:
-                    # Multi-document range: Use step-down logic
-                    needed = []
-                    curr = max_y
-                    while curr >= min_y:
-                        needed.append(curr)
-                        curr -= 3
-                    filter_conditions.append(
-                        models.FieldCondition(key="metadata.year", match=models.MatchAny(any=needed))
-                    )
-        elif target_year:
-            # Fallback to benchmark state
+        if task_year:
             filter_conditions.append(
-                models.FieldCondition(key="metadata.year", match=models.MatchValue(value=int(state["target_year"])))
+                models.FieldCondition(key="metadata.year", match=models.MatchValue(value=int(task_year)))
             )
         
         #document type filtering
@@ -109,8 +148,7 @@ def hybrid_retriever_node(state: AgentState):
             filter_conditions.append(
                 models.FieldCondition(key="metadata.doc_type", match=models.MatchValue(value=task_obj.doc_source))
             )
-
-       
+  
         # Embeddings
         dense_vector = list(dense_encoder.embed(search_string))[0].tolist()
         sparse_result = list(sparse_encoder.embed([search_string]))[0]
@@ -133,52 +171,75 @@ def hybrid_retriever_node(state: AgentState):
         for point in search_result.points: 
             if point.id not in seen_ids:
                 payload =point.payload
+                if "metadata" in payload:
+                    print(f"metadata keys{payload['metadata'].keys()}")
                 text_content= payload.get("page_content","")
+                p_company = payload.get("company") or payload.get("metadata", {}).get("company") or "N/A"  # Not "metadata.company", just "company"
+                p_year = payload.get("year") or  payload.get("metadata", {}).get("year") or "N/A"
+                p_source = payload.get("source") or payload.get("metadata", {}).get("source") or "N/A"    # This is your filename (e.g., NIKE_10K_2020.pdf)
+                p_doc_type = payload.get("doc_type") or payload.get("metadata", {}).get("doc_type") or "N/A"
+                p_page = payload.get("page") or payload.get("metadata", {}).get("page") or "N/A"
                 
                 #we inject the metadata into the text for the llm to see it later
 
                 enriched_text =(
-                f"[SOURCE:{task_obj.doc_source} | ZONE:{task_obj.zone} | RATIONALE:{task_obj.rationale}]\n"
-                f"{text_content}"
+                f"--- [COORD START] ---\n"
+                f"COMPANY_NAME: {p_company}\n"
+                f"YEAR: {p_year}\n"
+                f"SOURCE_ID: {p_source}\n" # This is the full filename
+                f"DOC_TYPE: {p_doc_type}\n"
+                f"PAGE: {p_page}\n"
+                f"CONTENT: {text_content}\n"
+                f"--- [COORD END] ---\n"
                )
+                      
                 
                 all_contexts.append({
                     "id": point.id,
+                    "source": p_source,
+                    "company": p_company, # Explicitly pass these for pre_filtering
+                    "year": p_year,#
+                    "doc_type":p_doc_type,
+                    "page":p_page,
                     "text": enriched_text,
-                    "source": task_obj.doc_source,     # 10K or Transcript
-                    "zone": task_obj.zone,
-                    "page_num": payload.get("metadata", {}).get("page", "N/A"),
+      
                 })
                
                 seen_ids.add(point.id)
     
     # --- 4. RERANKING ---
     rerank_query = query
-    if reflection and reflection.needs_revision:
-        rerank_query = f"{rerank_query} (Correction: {reflection.critique})"
+
+    # --- 4. RERANKING ---
+    if not all_contexts:
+        print("WARNING: No contexts found in Qdrant. Skipping rerank.")
+        top_chunks = []
         
+            
     rerank_request = RerankRequest(query=rerank_query, passages=all_contexts)
     # Return top 8 to ensure we catch enough rows from large tables
     #limit=12 if len(search_tasks)>1 else 8
     top_chunks = ranker.rerank(rerank_request)[:10]
-    print(f"total_chunks retrieved")
-
     
 
-    final_contexts = []
+    initial_contexts = []
+    final_contexts=[]
     for chunk in top_chunks:
         entry={
+        "company": chunk["company"], # Use the one tagged during retrieval
+        "year": chunk["year"],
         "source":chunk["source"],
-        "zone": chunk["zone"],
-        "page": chunk["page_num"],
-        "evidence":chunk["text"],
-        "company": target_company,
-        "year": target_year
+        "page": chunk["page"],
+        "evidence":chunk["text"]
     }
+    
 
+        initial_contexts.append(entry)
+    print(f"length of initial_contexts:{len(initial_contexts)}")
     
-        final_contexts.append(entry)
-    
+    final_contexts = pre_filtering(initial_contexts, plan)
+
+
     """
     retrieval_scores= log_heavy_metrics(
         query=state['query'],

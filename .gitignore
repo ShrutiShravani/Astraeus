@@ -10,7 +10,8 @@ data/masked
 data/extracted_md/
 data/ground_truth
 data/dead_letter_queue
-
+data/raw
+data/temp_chunks
 
 # OS
 .DS_Store

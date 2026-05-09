@@ -13,6 +13,9 @@ import os
 from langchain_core.messages import SystemMessage, HumanMessage
 
 
+from src.utils import monitoring
+
+
 promptloader= PromptManager()
 
 perf_cb=PerformanceCallback()
@@ -81,7 +84,19 @@ def system_1_guard(state:AgentState):
     plan_output = assessment["parsed"]
 
     detection = 1 if not plan_output.is_safe else 0
-    mlflow.log_metric("jail_break_detected",detection,step=current_turn)
+
+    current_run_id = monitoring.ACTIVE_AUDIT_RUN_ID
+    
+    if current_run_id is None:
+        print("Warning: Guardrail sees no Active Run ID")
+    else:
+        monitoring.client.log_metric(
+            run_id=current_run_id, 
+            key="jail_break_detected", 
+            value=float(detection), 
+            step=current_turn
+        )
+    
    
     metrics_getter= get_node_metrics("guard_rail",assessment,perf_cb,start_ts)
     node_results = metrics_getter(state)
