@@ -239,7 +239,9 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
     MLFLOW_TRACKING_URI="YOUR_MLFLOW_TRACKING_URI"
 
 
-**Note: Set up mlflow,langchain,prometheus,qdrant,llm api keys(gpt-40 and gpt-4o-mini),chroma and postgres checkpoints using your own credentials**
+**Note: Set up mlflow,langchain,prometheus,qdrant,llm api keys(gpt-40 and gpt-4o-mini),chroma and postgres checkpoints using your own credentials. Set up DOCKER COMPOSE.YML using own credentials**
+
+
 
 
 #### 2. Critical Configuration
@@ -264,20 +266,21 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
 
 
 
-#### 5. Start Infrasructure services
+#### 5. Start Infrastructure services:
 
 **Install Docker Desktop and start the required services:**
 
     * ```bash
     docker compose up -d
 
-#### 6. Run the Data Pipeline
-**first run data pipeline using dvc repro (data extraction to chunking and saving in qdrant)**
-
-**This will automatically save the generated vectors into your Qdrant instance.**
+#### 6. Run the Data Pipeline :
+   **first run data pipeline using dvc repro (data extraction to chunking and saving in qdrant)**
 
 
-#### 7. Run main application to test
+   **This will automatically save the generated vectors into your Qdrant instance.**
+
+
+#### 7. Run main application to test:
   **Option A**: 
   python main.py
 
