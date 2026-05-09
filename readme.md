@@ -274,7 +274,7 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
     docker compose up -d
 
 #### 6. Run the Data Pipeline :
-   * first run data pipeline using dvc repro (data extraction to chunking and saving in qdrant)
+   * First run data pipeline using dvc repro (data extraction to chunking and saving in qdrant)
 
 
    * This will automatically save the generated vectors into your Qdrant instance.
@@ -298,6 +298,7 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
 **Type B**
 *  Identify management's discussion on 'Nike Direct' growth and digital consumer connections during the 2020 global store shutdown period.
 *  how did the 'temporary closure of nearly all Nike's stores outside of Greater China' specifically impact Nike's investment in digital capabilities and the Nike App?
+
     Follow up Query :Given the $10.7 billion digital sales achieved in 2022, cross-reference this with the 2022 10-K 'Operating Overhead' section. Does management attribute the 80 basis point decline in gross margin specifically to these digital investments, or were logistics and freight the primary drivers?
 
 **Type C**
