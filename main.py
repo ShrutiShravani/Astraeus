@@ -39,7 +39,7 @@ async def run_nike_audit():
     # 1. DEFINE YOUR QUERIES (Until you have a file, define them here)
     nike_queries = [
         #{"type":"C","year":2022,"q": "In the 2022 Earnings Transcripts, management claims that 'consumer demand remains at an all-time high.' Verify this claim by cross-referencing the 10-K 'Inventory' growth and the 'Gross Margin' explanation. Does the 10-K suggest this demand was organic, or was it driven by aggressive promotions and inventory liquidation?"},
-        {"q":"Management discusses 'digital acceleration' in the 2020 transcript. Cross-reference the digital sales growth claims with the actual 'NIKE Direct' revenue line in the 10-K."}
+        {"q":"Calculate Nike's Gross Margin for 2022"}
 
         #{"q": "How did Nike's 'Direct-to-Consumer' (DTC) strategy shift in response to global store closures in 2020 according to the 10-K Risk Factors?"}
     ]

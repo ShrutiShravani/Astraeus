@@ -153,10 +153,12 @@ Post-human verification, Astraeus utilizes the **RAGAS** framework to evaluate t
 
 
 | Prometheus Reports |
-| :--- |
-| ![Report 1](./assets/Screenshot_1.png) |
-| ![Report 2](./assets/Screenshot_2.png) |
-| ![Report 3](./assets/Screenshot_3.png) |
+
+![Report 1](./assets/Screenshot_1.png)
+
+![Report 2](./assets/Screenshot_2.png)
+
+![Report 3](./assets/Screenshot_3.png)
 
 ### 4. Engineering Impact: The Audit Wiki
 The **Retrieval Auditor** consumes **36% of total latency**. To mitigate this for follow-up queries, verified evidence is cached in the **Audit Wiki**. This allows the **Planner** to skip the Retriever and Auditor steps entirely if a query is semantically similar to a previous audit, potentially reducing latency by up to **28s**.
