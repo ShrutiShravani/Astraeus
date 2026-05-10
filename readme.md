@@ -215,7 +215,7 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
 
 To scale **AESTRAUS** to 500+ documents while maintaining **99%+ precision** over complex, multi-turn audits, the following architectural shifts are in development:
 
-### 1. 📂 Relational State Management (Solving State Complexity)
+### 1. Relational State Management (Solving State Complexity)
 *   **Problem:** As an audit progresses through 50+ follow-up queries, the **Graph State** becomes a "context dump," leading to reasoning decay and "Signal-to-Noise" failure.
 *   **Architectural Change:** Transitioning from a flat list to a **Structured Relational State**.
 *   **Logic:** Categorizing the Audit Wiki into distinct schemas:
@@ -224,13 +224,13 @@ To scale **AESTRAUS** to 500+ documents while maintaining **99%+ precision** ove
     *   `temporal_history`: Audit trails across different fiscal years.
 *   **Outcome:** Enables **"Surgical Context Injection,"** allowing the Planner to pull only the specific data category required for a sub-task, minimizing hallucination risk.
 
-### 2. ✂️ Active Context Pruning (Solving "Lost in the Middle")
+### 2. Active Context Pruning (Solving "Lost in the Middle")
 *   **Problem:** Even with 1M+ token windows, LLM performance degrades at the center of a dense prompt. Over-stuffing history causes the agent to miss critical audit evidence.
 *   **Architectural Change:** Moving from "Infinite Context" to **Dynamic Pruning**.
 *   **Logic:** Implementing a **Knowledge Decay** and **Summary Compression** layer. Instead of passing raw historical data, the system passes a **Recursive Summary of Evidence**.
 *   **Outcome:** Keeps the Planner’s focus sharp on the **"Delta"**—the specific gap between existing verified knowledge and the current audit objective.
 
-### 3. 🏛️ Persistent Audit Knowledge Base (Permanent Asset Storage)
+### 3. Persistent Audit Knowledge Base (Permanent Asset Storage)
 *   **Problem:** Currently, the Audit Wiki is volatile (session-based). Once the application stops, the digital "Work Paper" vanishes.
 *   **Architectural Change:** Implementing a **Vector-Relational Database** for the persistent Audit Wiki.
 *   **Logic:**
