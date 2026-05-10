@@ -151,6 +151,13 @@ Post-human verification, Astraeus utilizes the **RAGAS** framework to evaluate t
 | **Unified Gen** | 5.54 | 3596 | Report Synthesis |
 | **Audit Engine** | 4.12 | 3851 | Integrity Scoring |
 
+
+| Prometheus Reports |
+| :--- |
+| ![Report 1](./assets/Screenshot%202026-05-08%20225135.png) |
+| ![Report 2](./assets/Screenshot%202026-05-08%20225211.png) |
+| ![Report 3](./assets/Screenshot%202026-05-08%2022513522.png) |
+
 ### 4. Engineering Impact: The Audit Wiki
 The **Retrieval Auditor** consumes **36% of total latency**. To mitigate this for follow-up queries, verified evidence is cached in the **Audit Wiki**. This allows the **Planner** to skip the Retriever and Auditor steps entirely if a query is semantically similar to a previous audit, potentially reducing latency by up to **28s**.
 
@@ -191,6 +198,7 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
 | **Generator Latency** | 45s | **5.54s** | **87.7%** |
 | **Follow-up Reliability** | Low (Redundant) | **High (Wiki-Aware)** | **N/A** |
 | **Total Audit Time** | ~5-6 Minutes | **53.11s** | **~85%** |
+
 
 ---
 
