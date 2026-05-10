@@ -1,7 +1,7 @@
 # ⚖️ Astraeus: Multi-Agent Forensic Audit & Divergence Engine
 
 ## 📘 Introduction
-**Astraeus** is a high-precision orchestration platform designed to automate the forensic auditing of corporate financial reporting. By utilizing a **Lead Auditor-Critic architecture**, the system identifies factual inconsistencies between official filings and earnings transcripts.
+**Astraeus** is a high-precision orchestration platform designed to automate the forensic auditing of corporate financial reporting. By utilizing a **Lead Auditor-Critic architecture**, the system identifies factual inconsistencies between official 10K financial report and earnings transcripts.
 
 ## 🏗️ System Architecture
 The engine is built on a directed graph using **LangGraph**, ensuring state-aware transitions between nodes.
@@ -81,7 +81,7 @@ Astraeus is built on a production-grade stack designed for high-precision forens
 *   **Language:** Python 3.11+
 *   **Framework:** **FastAPI** (Async high-performance API)
 *   **Orchestration:** **LangGraph** (State-aware Multi-Agent System)
-*   **Validation:** **Pydantic v2** (Strict data modeling and type safety)
+
 
 ### **Intelligence & Evaluation**
 *   **LLMs:** **GPT-4o** (Lead Auditor/Generator) & **GPT-4o-mini** (Guardrails/Retriever)
@@ -105,8 +105,7 @@ Astraeus is built on a production-grade stack designed for high-precision forens
 *   **Cloud Infrastructure:** **AWS (EC2)** (Scaled compute instances for high-concurrency auditing)
 *   **CI/CD Pipeline:** **GitHub Actions** (Automated testing, linting, and container deployment)
 *   **Unit Testing:** **Every push triggers tests to validate node logic and API endpoints.
-*   **Regression Testing:** **Ensures that prompt updates or model changes (e.g., GPT-4o to mini) do not degrade the accuracy of Type C  
-                             Divergence scores.
+*   **Regression Testing:** **Ensures that prompt updates or model changes (e.g., GPT-4o to mini) do not degrade the accuracy of Type C Divergence scores.
 
 ### **Continuous Monitoring**:
 *  **Latency Alerts:** Automated Prometheus alerts if any audit node exceeds the P95 threshold.
