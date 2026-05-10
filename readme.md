@@ -170,7 +170,6 @@ The **Retrieval Auditor** consumes **36% of total latency**. To mitigate this fo
 
 ----
 
-
 ## 🚀 Critical Engineering Challenges & Optimizations
 
 Building a production-grade forensic engine on consumer hardware (32GB RAM) required solving high-stakes bottlenecks in latency and state management. Below are the architectural optimizations implemented to achieve a **~85% reduction in total audit time** and **100% state-aware accuracy**.
@@ -239,7 +238,6 @@ To scale **AESTRAUS** to 500+ documents while maintaining **99%+ precision** ove
 *   **Outcome:** Massive reduction in token costs and latency by treating the Audit Wiki as a **Permanent Knowledge Asset** rather than a temporary buffer.
 
 ---
-
 # How to run
 
 ### 1. Configure Environment Variables
