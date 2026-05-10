@@ -104,7 +104,7 @@ Astraeus is built on a production-grade stack designed for high-precision forens
 ### **Cloud & DevOps (Deployment Architecture)**
 *   **Cloud Infrastructure:** **AWS (EC2)** (Scaled compute instances for high-concurrency auditing)
 *   **CI/CD Pipeline:** **GitHub Actions** (Automated testing, linting, and container deployment)
-*   **Unit Testing:** **Every push triggers tests to validate node logic, Pydantic schemas, and API endpoints.
+*   **Unit Testing:** **Every push triggers tests to validate node logic and API endpoints.
 *   **Regression Testing:** **Ensures that prompt updates or model changes (e.g., GPT-4o to mini) do not degrade the accuracy of Type C  
                              Divergence scores.
 
@@ -114,7 +114,7 @@ Astraeus is built on a production-grade stack designed for high-precision forens
 *  **Forensic Integrity & SecuritY:**
             * PII Masking: Microsoft Presidio automatically anonymizes sensitive data within SEC filings before they are ingested into Qdrant.
 
-           * Forensic Quality Gates: Custom filters for Hallucination, Math, and Traceability scoring to ensure the final report is legally and financially sound.
+           * Forensic Quality Gates: Audit engine for Hallucination, Math, and Traceability scoring to ensure the final report is legally and financially sound.
 
            * Secure State Management: Uses environment variables and AWS Secrets Manager to handle API keys and Database credentials.
 
@@ -175,11 +175,11 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
 *   **The Solution:** Developed the **Audit Wiki**—a persistent short-term memory store—complemented by a **Purifier Prompt**.
     *   **Verified Evidence:** Saves the page number, source, and a "Mini Evidence Summary" for every verified task.
     *   **Purifier Node:** Before the Planner acts, this node cross-references the new query against the Wiki to mark tasks as "Already Verified" or "Requires Retrieval."
-*   **Impact:** For follow-up queries, the system skips redundant retrieval and auditor nodes entirely, ensuring 100% consistency and near-instant response times.
+*   **Impact:** For follow-up queries, the system skips redundant retrieval(if audit wiki has evidence to answer query/task) and auditor nodes entirely, ensuring 100% consistency and near-instant response times.
 
 ### **3. Context Window & Token Optimization**
 *   **The Challenge:** Forensic reports (Type C) require dense comparison between 10-Ks and transcripts. Feeding raw chunks to the Generator caused context-window overflows and high costs.
-*   **The Solution:** The Retrieval Auditor now synthesizes and passes only **"Verified Evidence Summaries"** to the Generator.
+*   **The Solution:** The Retrieval Auditor now synthesizes and passes only **"Filtered contexts"** to the Generator.
 *   **Impact:** Keeps the **Unified Generator** within optimal limits (avg. 3,596 input tokens), maintaining high performance while remaining hardware-safe.
 
 
@@ -291,6 +291,7 @@ Building a production-grade forensic engine on consumer hardware (32GB RAM) requ
 #### 8. Set of queries to test:
 **Type A**
 *  Calculate Nike's Gross Margin for 2022 .
+   
    Follow up query: Extract the Gross Margin for Fiscal 2021 and compare it against the 2022 figure.
 *  Management claims the 120 bps increase in Gross Margin was due to 'NIKE Direct' and 'full-price sales.' Cross-reference this with the 'Inventory' levels in the 10-K.
 *  Calculate the percentage change in Nike's 'Cash and Equivalents' between FY2019 and FY2020 to determine the liquidity buffer built during the pandemic.
