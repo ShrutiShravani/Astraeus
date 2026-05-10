@@ -7,7 +7,7 @@
 The engine is built on a directed graph using **LangGraph**, ensuring state-aware transitions between nodes.
 
 <p align="center">
-  <img src="./assets/ChatGPT Image May 10, 2026, 05_32_49 PM.png" width="1100"/>
+  <img src="./assets/aestraus.png" width="1100"/>
 </p>
 
 
