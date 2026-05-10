@@ -6,6 +6,11 @@
 ## 🏗️ System Architecture
 The engine is built on a directed graph using **LangGraph**, ensuring state-aware transitions between nodes.
 
+<p align="center">
+  <img src="./assets/ChatGPT Image May 10, 2026, 05_32_49 PM.png" width="1100"/>
+</p>
+
+
 ### 1. 🏗️ Data Pipeline Architecture
 
 Astraeus utilizes a multi-stage ingestion pipeline managed by **DVC** to transform raw financial filings into high-fidelity, searchable vectors. The pipeline ensures forensic integrity through strict PII masking and granular metadata tagging.
