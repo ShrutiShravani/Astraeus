@@ -9,7 +9,7 @@ The engine is built on a directed graph using **LangGraph**, ensuring state-awar
 <p align="center">
   <img src="./assets/aestraus.png" width="1100"/>
 </p>
-
+----
 
 ### 1. 🏗️ Data Pipeline Architecture
 
@@ -285,8 +285,6 @@ To scale **AESTRAUS** to 500+ documents while maintaining **99%+ precision** ove
 **Note: Set up mlflow,langchain,prometheus,qdrant,llm api keys(gpt-40 and gpt-4o-mini),chroma and postgres checkpoints using your own credentials. Set up DOCKER COMPOSE.YML using own credentials**
 
 
-
-
 #### 2. Critical Configuration
 
 **NOTE- IN PORMETHEUS.YML MAKE SURE YOU ARE SETTING YOUR OWN LOCAL HOST/FAST API AS TARGET**
@@ -317,7 +315,7 @@ To scale **AESTRAUS** to 500+ documents while maintaining **99%+ precision** ove
     docker compose up -d
 
 #### 6. Run the Data Pipeline :
-   * First run data pipeline using dvc repro (data extraction to chunking and saving in qdrant)
+   * First run data pipeline using dvc repro (data extraction to chunking and saving in qdrant).Use raw data in data\raw folder.Upload both financial reprot and transcripts 
 
 
    * This will automatically save the generated vectors into your Qdrant instance.
