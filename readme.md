@@ -236,8 +236,6 @@ To scale **AESTRAUS** to 500+ documents while maintaining **99%+ precision** ove
     *   New queries perform a **Semantic Search** against the entire history of verified audit facts before triggering the Planner.
     *   **Zero-Retriever Logic:** If the answer exists in the persistent Wiki, the system bypasses the Retrieval Node entirely.
 *   **Outcome:** Massive reduction in token costs and latency by treating the Audit Wiki as a **Permanent Knowledge Asset** rather than a temporary buffer.
-
----
 # How to run
 
 ### 1. Configure Environment Variables
