@@ -143,7 +143,7 @@ Astraeus treats observability as a mechanical necessity for reliability on consu
 Post-human verification, Astraeus utilizes the **RAGAS** framework to evaluate the long-term reliability of the Lead Auditor-Critic loop.
 
 *   **Faithfulness Score (~88%):** Measures how well the final report is grounded in the retrieved SEC filings, ensuring zero fabrication of financial data.
-*   **Answer Relevancy (~75%):** Evaluates how directly the audit report addresses the initial query. Optimization is ongoing to improve precision in complex Type C (Divergence) audits.
+*   **Answer Relevancy (~75%):** Evaluates how directly the evidence in audit report addresses the initial query. Optimization is ongoing to improve precision in sepcifically complex Type C (Divergence) audits.
 
 ### 3. Node Performance Analysis (Benchmark: 53.11s)
 
