@@ -237,6 +237,20 @@ To scale **AESTRAUS** to 500+ documents while maintaining **99%+ precision** ove
     *   **Zero-Retriever Logic:** If the answer exists in the persistent Wiki, the system bypasses the Retrieval Node entirely.
 *   **Outcome:** Massive reduction in token costs and latency by treating the Audit Wiki as a **Permanent Knowledge Asset** rather than a temporary buffer.
 
+### Audit to Alpha Generation
+
+#### 1. Forensic Alpha Synthesis
+* Quantifying the financial impact of discrepancies found during SEC filing audits.
+* Calculates intrinsic stock valuation deltas to identify specific market mispricing signals.
+
+#### 2. Lead Auditor-Critic Debate Loop
+* Implementing a consensus-based agentic structure to eliminate analytical hallucinations.
+* Forces a skeptic agent to verify findings against secondary filings before promoting trade signals.
+
+#### 3. Multi-Year State Persistence
+* Building a longitudinal data engine to track shifts in a company's accounting logic over five years.
+* Flags aggressive changes in reporting patterns that typically precede significant market corrections.
+
 ---
 # How to run
 
