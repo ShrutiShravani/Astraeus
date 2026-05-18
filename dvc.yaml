@@ -1,0 +1,25 @@
+stages:
+  data_extraction:
+    cmd: python src/data_pipeline/data1_extraction.py
+    deps: 
+      - data/raw/report
+      - data/raw/transcripts
+      - src/data_pipeline/data1_extraction.py  
+    outs: 
+      - data/extracted_md
+
+  pii_masking:
+    cmd: python src/data_pipeline/pii_masking.py
+    deps: 
+      - data/extracted_md
+      - src/data_pipeline/pii_masking.py       
+    outs: 
+      - data/masked
+
+  chunking_and_indexing:
+    cmd: set PYTHONPATH=. && python src/data_pipeline/chunker.py
+    deps: 
+      - data/masked
+      - src/data_pipeline/chunker.py          
+    outs: 
+      - data/vector_store_status.txt          

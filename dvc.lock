@@ -1,0 +1,60 @@
+schema: '2.0'
+stages:
+  data_extraction:
+    cmd: python src/data_pipeline/data1_extraction.py
+    deps:
+    - path: data/raw/report
+      hash: md5
+      md5: 73d50a7ab826850f646855b8ee7428b3.dir
+      size: 1457725
+      nfiles: 1
+    - path: data/raw/transcripts
+      hash: md5
+      md5: d751713988987e9331980363e24189ce.dir
+      size: 0
+      nfiles: 0
+    - path: src/data_pipeline/data1_extraction.py
+      hash: md5
+      md5: d000dc79436f265543289d00754842b1
+      size: 4903
+    outs:
+    - path: data/extracted_md
+      hash: md5
+      md5: 71b2767d61546ac4fddd14acb037572f.dir
+      size: 614266
+      nfiles: 1
+  pii_masking:
+    cmd: python src/data_pipeline/pii_masking.py
+    deps:
+    - path: data/extracted_md
+      hash: md5
+      md5: 71b2767d61546ac4fddd14acb037572f.dir
+      size: 614266
+      nfiles: 1
+    - path: src/data_pipeline/pii_masking.py
+      hash: md5
+      md5: c7df3f98efd950daf0850735dfae84fd
+      size: 3021
+    outs:
+    - path: data/masked
+      hash: md5
+      md5: 6a79413e0857b8271a029293f0b97b7b.dir
+      size: 615172
+      nfiles: 1
+  chunking_and_indexing:
+    cmd: set PYTHONPATH=. && python src/data_pipeline/chunker.py
+    deps:
+    - path: data/masked
+      hash: md5
+      md5: 6a79413e0857b8271a029293f0b97b7b.dir
+      size: 615172
+      nfiles: 1
+    - path: src/data_pipeline/chunker.py
+      hash: md5
+      md5: 060166075c08d88d2fb63633b551a797
+      size: 6484
+    outs:
+    - path: data/vector_store_status.txt
+      hash: md5
+      md5: 7d2f93e903a09bedc97c6d532b461738
+      size: 48

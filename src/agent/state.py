@@ -20,7 +20,7 @@ class Task(BaseModel):
    
 class SecurityRating(BaseModel):
     is_safe:bool=Field(description="True if the query is a legittimate financial audit question,False if it is an injection or jail break attempt")
-    reason:str= Field(decsription="Brief reason for the safety rating.")
+    reason:str= Field(description="Brief reason for the safety rating.")
 
 class EvidenceFound(BaseModel):
     task_name: str = Field(description="The specific task or metric from the Planner (e.g., '2019 COGS')")
@@ -38,7 +38,7 @@ class Retriever_feedback(BaseModel):
     found_evidence: List[EvidenceFound] = Field(description="List of all verified data points found in context")
 
 class Reflection(BaseModel):
-    decision:str=Field(decsription="Accept or reject the report")
+    decision:str=Field(description="Accept or reject the report")
     critique:str= Field(description="Detailed explanation of hallucinations or missing info")
     needs_revision:bool= Field(description="True if we need to go back to retrieval.")
     #target_node: Literal["generator","human"]=Field(description="Who needs to fix the error?Retriever for missing data,Generator for writing errors, Human for Red Flags.")
@@ -105,7 +105,7 @@ class FinalGeneration(BaseModel):
     # --- THE NEW ARCHITECT FIELDS ---
     narrative_conflict_score: int=Field(
         ge=1, le=5, 
-        decsription= "A qualitative measure (1-5) representing the degree of discrepancy between corporate narrative (Transcripts) and empirical reporting (10-K). High scores indicate a high-risk divergence requiring immediate human investigation."
+        description= "A qualitative measure (1-5) representing the degree of discrepancy between corporate narrative (Transcripts) and empirical reporting (10-K). High scores indicate a high-risk divergence requiring immediate human investigation."
     ) # Business Metric: Is the CEO lying? (1-5)
     conflict_rationale:str  =Field(description="A concise justification explaining the forensic discrepancy. This field serves as the Proactive Summary for the human auditor, distilling why the system flagged the specific statement as contradictory.")
 

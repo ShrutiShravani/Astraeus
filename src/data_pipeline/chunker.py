@@ -2,12 +2,13 @@ import os
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
-from constants.constant import *
+from src.constants.constant import MAX_CONCURRENT_JOBS,chunk_overlap,chunk_size,REQUEST_TIMEOUT
 from dotenv import load_dotenv
 from qdrant_client.http import models
 import re
 from langchain_huggingface import HuggingFaceEmbeddings
 from pathlib import Path
+from datetime import datetime
 
 load_dotenv()
 
@@ -145,6 +146,9 @@ def process_and_upload(md_files: list[Path]):
                 print(f"Done: {company} {year} | Batch {j}-{j+len(batch)}")
             except Exception as e:
                 print(f"Error uploading {company}: {e}")
+    
+    with open ("data/vector_store_status.txt", "w") as f:
+        f.write(f"Indexed {len(all_docs)} chunks on {datetime.now()}")
 
     print("Ingestion Complete: All files processed exactly once.")
 
