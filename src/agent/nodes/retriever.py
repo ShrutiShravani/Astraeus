@@ -120,7 +120,7 @@ def hybrid_retriever_node(state: AgentState):
     # --- 2. DYNAMIC YEAR FILTERING (UNIVERSAL) ---
     filter_text = (" ".join(t.title for t in plan) if plan else query) 
     found_years = [int(y) for y in re.findall(r'\b(20\d{2})\b', filter_text)]
-    
+     
 
     for task_obj in plan:
         search_string = task_obj.title
@@ -221,6 +221,7 @@ def hybrid_retriever_node(state: AgentState):
     #limit=12 if len(search_tasks)>1 else 8
     top_chunks = ranker.rerank(rerank_request)[:10]
     
+
 
     initial_contexts = []
     final_contexts=[]

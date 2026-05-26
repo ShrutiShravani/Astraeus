@@ -29,7 +29,7 @@ llm_mini = ChatOpenAI(model="gpt-4.1-mini",streaming=True,
 # Try GPT-4o -> Try Snapshot -> Try Mini (Fail-safe)
 resilient_pro = llm_pro.with_fallbacks([llm_pro_snap, llm_mini])
 
-async def query_aware_compression(context,query,planner_tasks):
+def query_aware_compression(context,query,planner_tasks):
     """
     Compresses context to only the parts relevant to the query and tasks.
     """
@@ -51,10 +51,11 @@ async def query_aware_compression(context,query,planner_tasks):
     Output the compressed, high-density evidence blocks below:
     """
 
-    response = await llm_pro.ainvoke(compression_prompt)
+    response =  llm_pro.ainvoke(compression_prompt)
     return response.content
 
-async def retrieval_auditor_node(state:AgentState,config: RunnableConfig):
+def retrieval_auditor_node(state:AgentState):
+    #remove config: RunnableConfig from args above
     start_ts=time.time()
     current_query = state["query"]
     current_turn = state.get("turn_count", 0) + 1
@@ -71,7 +72,7 @@ async def retrieval_auditor_node(state:AgentState,config: RunnableConfig):
     planner_tasks= "\n".join([f"Task{i+1} {t.title} | Source: {t.doc_source}" for i, t in enumerate(plan)]) 
     
     print(f"Debug-----Stratign compresstion {time.time()}")
-    compressed_evidence= await query_aware_compression(context,current_query,planner_tasks)
+    compressed_evidence= query_aware_compression(context,current_query,planner_tasks)
     print(f"compressed_evidence_summary:{compressed_evidence}")
 
     node_config = promptloader.prompts.get('retriever_auditor', {})
@@ -86,7 +87,7 @@ async def retrieval_auditor_node(state:AgentState,config: RunnableConfig):
     print(f"!!! DISPATCHING: {planner_tasks.title}")
   
     # .ainvoke is the ASYNC version of .invoke
-    response = await structured_llm.ainvoke(
+    response = structured_llm.ainvoke(
         prompt, 
         config={"callbacks": [perf_cb]}
     )

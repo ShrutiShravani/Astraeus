@@ -117,8 +117,6 @@ def audit_engine(state: AgentState):
             )
     
    
-
-
     metrics_getter = get_node_metrics(
         "audit_engine",
         response,

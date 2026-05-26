@@ -49,3 +49,4 @@ psutil
 deepeval
 promtheus-client
 slowapi
+pymupdf

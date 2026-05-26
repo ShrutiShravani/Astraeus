@@ -26,7 +26,7 @@ def base_state():
 @patch("src.agent.nodes.system_guradrail.promptloader")
 @patch("src.agent.nodes.system_guradrail.llm_mini")
 
-def test_system_guardrail(mock_llm,mock_prompt_loader,mock_resilient_brain,base_state):
+def test_system_guardrail(mock_llm_mini,mock_prompt_loader,mock_resilient_brain,base_state):
     mock_prompt_loader.prompts.get.return_value={
         "system_guardrail_prompt":"{user_input}",
         "version": "1.0.0"

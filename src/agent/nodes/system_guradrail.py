@@ -35,6 +35,7 @@ llm_gpt4o = ChatOpenAI(
     temperature=0, 
     max_retries=3
 )
+
 resilient_brain = llm_mini.with_fallbacks([llm_gpt4o])
 
 def system_1_guard(state:AgentState):
