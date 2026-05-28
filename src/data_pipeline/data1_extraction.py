@@ -102,12 +102,12 @@ def process_page_in_process(task):
     page_num, single_page_bytes = task
     start_time = time.time()
     
-    # Process isolated single page chunk directly out of volatile memory bounds
+
     doc = fitz.open(stream=single_page_bytes, filetype="pdf")
-    f_page = doc[0] # FIX: Pull the explicit layout page object index out of Document container
+    f_page = doc[0] 
 
     with pdfplumber.open(io.BytesIO(single_page_bytes)) as plumber_doc:
-        p_page = plumber_doc.pages[0] # Single page file means index is always 0
+        p_page = plumber_doc.pages[0] 
         tables = p_page.find_tables()
         table_bboxes = [table.bbox for table in tables]
 
@@ -115,8 +115,7 @@ def process_page_in_process(task):
     blocks = f_page.get_text("blocks")
     blocks_count = len(blocks)
 
-    # PyMuPDF block matrix structure: (x0, y0, x1, y1, "text string lines", block_no, block_type)
-    # The actual parsed text content lines string string elements reside explicitly at index index position 4
+ 
     structured_signal = sum(1 for b in blocks if len(b[4]) > 10)
     blocks_summary = (blocks_count, structured_signal)
 
