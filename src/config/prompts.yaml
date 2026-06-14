@@ -94,6 +94,7 @@ retriever_auditor:
     ### 1. FOUND EVIDENCE LIST (FORMAT)
     For EVERY task in {planner_tasks}, fill 'found_evidence':
     - task_name: Title from Planner.
+    - year: year
     - status: 'FOUND' | 'MISSING'.
     - source: Snippet ID/Filename.
     - page: Page number.
@@ -161,12 +162,183 @@ extractor:
     }}
 
 
+divergence_analyst:
+  version: "v1.1.0"
+  divergence_analyst_prompt: |
+    You are a Financial Divergence Analysis Engine.
+    
+
+    Your task is to determine whether for the given {query} , management statements made in
+    Earnings Call Transcripts are consistent with disclosures made in
+    SEC 10-K filings using "{final_context}"
+
+    NOTE:If mathematical calculations {calculation_result} are available,
+    use them as supporting evidence.
+
+    Do not require calculations to determine divergence.
+    Evidence comparison remains the primary source of truth.
+
+    ------------------------------------------------------------
+    DECISION PROCESS
+    ------------------------------------------------------------
+
+      Step 1:
+      Identify transcript evidence relevant to the user query.
+
+      Step 2:
+      Identify corresponding 10-K filing evidence addressing the same
+      business topic.
+
+      Step 3:
+      Compare transcript evidence against filing evidence.
+
+      Determine:
+
+      - ALIGNED
+      - PARTIALLY_ALIGNED
+      - DIVERGENT
+
+    ------------------------------------------------------------
+    MATERIALITY RULE
+    ------------------------------------------------------------
+
+    Only classify a finding as DIVERGENT when the discrepancy impacts
+    one or more of the following:
+
+      - Revenue
+      - Guidance
+      - Risk Exposure
+      - CapEx
+      - Margins
+      - Demand
+      - Financial Outlook
+
+    Ignore purely stylistic or wording differences that do not change
+    business meaning.
+
+    ------------------------------------------------------------
+    EVIDENCE PRECEDENCE RULE
+    ------------------------------------------------------------
+
+    Numerical disclosures and factual statements contained in SEC
+    filings have higher authority than subjective management commentary.
+
+    If management commentary conflicts with reported metrics,
+    prefer filing evidence.
+
+    ------------------------------------------------------------
+    DIVERGENCE CLASSIFICATION
+    ------------------------------------------------------------
+
+    If alignment_status = DIVERGENT:
+
+      classify divergence_type as one of:
+
+      - Revenue
+      - Guidance
+      - Risk
+      - CapEx
+      - Narrative
+
+      Every divergence claim MUST cite:
+
+      - At least one transcript evidence source
+      - At least one 10-K evidence source
+  
+    -------
+    CRITICAL
+    -------
+    if there is no actual divergence,don't classify unnecessar as "divergence" just to satisfy query.
+
+    ------------------------------------------------------------
+    SCORING
+    ------------------------------------------------------------
+
+    Assign narrative_conflict_score.
+
+      Score Meaning:
+
+      1 = Fully aligned
+
+      2 = Minor wording difference
+
+      3 = Moderate discrepancy
+
+      4 = Significant divergence
+
+      5 = Direct contradiction
+
+    Scoring Constraints:
+
+      If alignment_status = ALIGNED:
+          score = 1
+
+      If alignment_status = PARTIALLY_ALIGNED:
+          score = 2 or 3
+
+      If alignment_status = DIVERGENT:
+          score = 4 or 5
+
+    ------------------------------------------------------------
+    CRITICAL SIGNAL RULE
+    ------------------------------------------------------------
+
+    If management uses strongly positive language such as:
+
+      - strong demand
+      - acceleration
+      - growth
+      - step-function improvement
+      - improving trends
+
+    while filing evidence shows:
+
+      - declining demand
+      - revenue contraction
+      - reduced orders
+      - deteriorating metrics
+      - increased risk
+
+    classify as DIVERGENT and assign a score of 4 or 5.
+
+    ------------------------------------------------------------
+    OUTPUT GENERATION
+    ------------------------------------------------------------
+    Return ONLY valid JSON matching schema.
+    No explanation outside fields.
+    Generate:
+
+      - alignment_status
+      - narrative_conflict_score
+      - divergence_type
+      - divergence_reason
+      - conflict_rationale
+
+    ------------------------------------------------------------
+    ZERO-HALLUCINATION RULE
+    ------------------------------------------------------------
+    You MUST NOT classify divergence unless both:
+    - transcript evidence is explicitly present in context
+    - 10-K evidence is explicitly present in context
+    - Never fabricate divergence.
+    
+
+    If transcript evidence and filing evidence support the same
+    conclusion:
+
+    alignment_status = ALIGNED
+    narrative_conflict_score = 1
+    divergence_type = None
+    divergence_reason = No material divergence detected.
+    conflict_rationale = Financial Narrative Aligns with Reported Metrics.
+    
+
 
 unified_generator:
   version: "v1.1.0"
   unified_generator_prompt: |
     ### ROLE: Senior Forensic Audit Reporting Engine
-    
+
     {mode_instruction}
     {follow_up_instruction}
     {revision_instruction}
@@ -178,42 +350,80 @@ unified_generator:
     3. MATH_RESULT: {math_result}
     4. CONTEXT_HISTORY: {final_context_str}
 
-    #### [OPERATIONAL LOGIC]
-    1. Generate a professional Markdown Audit Report 
-    2. Extract metadata from markers like '[COORD_START: ...]' to populate "used_coordinates" and "used_page_numbers".
-    3. For type "C" query evaluate the relationship between Transcripts and 10-Ks to assign the "narrative_conflict_score".
-       - CRITICAL: If management uses 'positive' adjectives (growth, acceleration, step-function) but the 10-K shows 'negative' metrics (contraction, drop, decrease), mark the Narrative Conflict Score as HIGH (3-5).
-       - 5: CRITICAL CONFLICT. Transcript and 10-K directly contradict.
-       - 3: MILD DISCREPANCY. Mismatched tone or missing context.
-       - 1: PERFECT ALIGNMENT. Narrative matches reporting exactly.
-       - CONFLICT RATIONALE: >  - If score > 1: Synthesize a clear Conflict Rationale explaining the DIVERGENCE.
+    ### [OPERATIONAL LOGIC]
+    1. Generate a professional Markdown Audit Report.
+    ------------------------------------------------------------
+    REPORTING SCHEMA (MANDATORY)
+    ------------------------------------------------------------
 
-                                - If score = 1: State exactly: "Financial Narrative Aligns with Reported Metrics."
+    1. EXECUTIVE SUMMARY
+    2. ANALYSIS (include conflict rationale for Type C)
+    3. EVIDENCE TABLE (SHOULD INCLUDE YEAR,COMPANY,SOURCE,PAGE,EVDIENCE_TEXTS)
+    4. MATH CALCULATION
+    5.
 
-       - ZERO-HALLUCINATION GUARD: Do not "create" a conflict for the sake of the prompt. If the CEO and the 10-K agree, you MUST report a score of 1. Identifying honesty is just as important as identifying lies.
+    CRITICAL: REPORT MUST INCLUDE USED_COORDINATES OR IT IS INVALID.
+
+    ------------------------------------------------------------
+    FEW-SHOT OUTPUT FORMAT
+    ------------------------------------------------------------
+
+    "report": "...markdown...",
+    "used_coordinates": ["year":2020,"source":"NIKE_2020_TRANSCRIPT_masked.md","page":8],
+    "narrative_conflict_score": 1,
+    "divergence_type": null,
+    "divergence_reason": "No material divergence detected.",
+    "conflict_rationale": "Financial Narrative Aligns with Reported Metrics."
+     
+    VERIFIED_EVIDENCE:
+    {final_context_str}
+
+    Use ONLY this evidence to create:
+    - Evidence Table
+    - Used Evidence Texts
+    - Used Coordinates section
+
+    The VERIFIED_EVIDENCE block is the single source of truth.
+
+    Do not:
+    - invent evidence
+    - invent companies
+    - invent years
+    - invent sources
+    - invent pages
+    - omit provided evidence
+
+    Copy metadata exactly as provided.
     
-    ### [REPORTING SCHEMA - MANDATORY]
-    Your report  field MUST follow this internal Markdown structure:
-    1. ### EXECUTIVE SUMMARY: Direct answer, bold figures.
-    2. ### ANALYSIS: Narrative 'Why/How'. For Type C, include the Conflict Rationale.
-    3. ### EVIDENCE TABLE: Markdown table with Year, Source, Page, Description, Relevance.
-    4. ### MATH CALCULATION: Step-by-step formulas used.
-    5. ### USED_EVIDENCE_TEXTS: Verbatim 100-character quotes.
-    6. ### "USED_COORDINATES": ["company": "NIKE", "year": "2020", "source": "NIKE_2020_10K.md", "page": 43],
+    TYPE_C  query REPORTING RULE:
 
-    CRTIICLA: ITIS MANDATORY TO ADD USED_COORDINATES. NO REPROT WILL BE ACCEPTED WITHOUT USED_COORDINATES.
+    If divergence analysis results are present:
 
-    ### [FEW-SHOT EXAMPLE OUTPUT]
-      "report": "### EXECUTIVE SUMMARY\nNike accelerated digital transformation...\n### ANALYSIS\nScore 1: Alignment found...\n### EVIDENCE TABLE\n| 2020 | 10-K | 43 | Digital Pivot | High |",
-      "used_coordinates": ["company": "NIKE", "year": "2020", "source": "NIKE_2020_10K.md", "page": 43],
-      "narrative_conflict_score": 1,
-      "conflict_rationale": "Financial Narrative Aligns with Reported Metrics."
-    
-        
+    Use below scores excatly as provided. dont create scores on your own:
+    - {alignment_status}
+    - {narrative_conflict_score}
+    - {divergence_type}
+    - {divergence_reason}
+    - {conflict_rationale}
 
-    ### [VITAL TURN-CONTEXT RULES]
-    - If [1] VERIFIED FINANCIAL DATA or [2] PREVIOUS NARRATIVE EVIDENCE are present, they are the "Settled Law." 
-    - You MUST integrate them if relevant. If they contradict [3] NEW INVESTIGATION FINDINGS, flag it in the Analysis.
+    Do NOT re-evaluate transcript vs filing evidence.
+    Do NOT generate a new divergence score.
+    Do NOT overwrite divergence findings.
+
+    Your responsibility is report generation only.
+    STATE PRIORITY RULES
+    1. audit_wiki = verified facts (highest priority)
+    2. planner_tasks = intended reasoning path
+    3. retrieved_context = supporting evidence (secondary)
+    4  divergence_analysis = verified divergence findings
+
+    If conflict exists:
+    - audit_wiki overrides all
+    - conflicts must be explicitly logged in analysis
+    - never silently overwrite verified facts
+
+    Always reuse verified facts when relevant.
+    Never contradict them without explicit justification.
 
   
 audit_engine:

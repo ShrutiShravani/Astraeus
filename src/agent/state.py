@@ -96,9 +96,19 @@ class Coordinate(BaseModel):
     # Use Union to catch cases where the LLM sends the page as a string
     page: Union[int, str] = Field(description="The page number")
 
+class DivergenceAnalyst(BaseModel):
+    alignment_status: str = Field(
+    description="""
+    Financial narrative alignment classification between earnings call transcripts and 10-K filings.
 
-class FinalGeneration(BaseModel):
-    report: str = Field(description="The full markdown audit report")
+    Values:
+    - ALIGNED
+    - PARTIALLY_ALIGNED
+    - DIVERGENT
+
+    Indicates whether management statements are supported by reported disclosures.
+    """
+)
     #used_page_numbers: list[int] = Field(description="List of unique page numbers cited in the EVIDENCE TABLE")
     #used_evidence_texts: List[str] = Field(description="The list of raw evidence strings used in the report.Do not include instructions or metadata headers.")
     #used_coordinates:List[Coordinate] = Field(description="List of Company,year,Source and Page coordinates used")
@@ -107,8 +117,40 @@ class FinalGeneration(BaseModel):
         ge=1, le=5, 
         description= "A qualitative measure (1-5) representing the degree of discrepancy between corporate narrative (Transcripts) and empirical reporting (10-K). High scores indicate a high-risk divergence requiring immediate human investigation."
     ) # Business Metric: Is the CEO lying? (1-5)
+    divergence_type:str=Field(description="""
+    For TYPE_C financial forensic analysis only.
+    Classification of the detected divergence between management statements
+    in earnings call transcripts and disclosures in 10-K filings.
+
+    Allowed values:
+    - Revenue
+    - Guidance
+    - Risk
+    - CapEx
+    - Narrative
+    - None
+
+    Return 'None' if no divergence is detected.
+    """)
+    divergence_reason:str=Field(decsription="""
+    Short explanation of why the divergence was classified.
+
+    Must summarize the conflict between transcript evidence and filing evidence.
+    Include the key business issue being contradicted or misaligned.
+
+    Examples:
+    - Management described demand as accelerating while the filing disclosed declining orders.
+    - Earnings call emphasized strong growth but the filing reported revenue contraction.
+    - No material divergence detected; transcript narrative aligns with reported metrics.
+    """)
+
     conflict_rationale:str  =Field(description="A concise justification explaining the forensic discrepancy. This field serves as the Proactive Summary for the human auditor, distilling why the system flagged the specific statement as contradictory.")
 
+
+class FinalGeneration(BaseModel):
+    report: str = Field(description="The full markdown audit report")
+
+    
 class FinancialMetric(BaseModel):
     label: str = Field(description="The name of the metric (e.g., Net_Income, Total_Assets).")
     value: float = Field(description="The numeric value extracted.")
@@ -148,6 +190,11 @@ class AgentState(TypedDict):
     reflection_feedback: Optional[Reflection]
     retriever_feedback:Optional[Retriever_feedback]
     ragas_scores:str
+    alignment_status: Optional[str]
+    narrative_conflict_score: Optional[int]
+    divergence_type: Optional[str]
+    divergence_reason: Optional[str]
+    conflict_rationale: Optional[str]
     turn_count: int
     human_decision:str
     steps: Annotated[List[str], operator.add]

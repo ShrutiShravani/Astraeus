@@ -29,6 +29,19 @@ llm_mini = ChatOpenAI(model="gpt-4o",streaming=True, temperature=0, max_retries=
 resilient_pro = llm_pro.with_fallbacks([llm_pro_snap, llm_mini])
 resilient_mini = llm_mini.with_fallbacks([llm_pro])
 
+def extract_from_verified_evidence(context):
+    coordinates = []
+    for c in context:
+        coordinates.append({"source": c.get('source'),
+        "page": c.get('page'),
+        "company": c.get('company'),
+        "year": c.get('year'),
+        "evidence": c.get('evidence')}
+        )
+    
+    return  coordinates
+    
+
 def unified_generator_node(state: AgentState):
     start_ts=time.time() 
     current_turn = state.get("turn_count", 0) + 1
@@ -40,6 +53,11 @@ def unified_generator_node(state: AgentState):
     is_follow_up = state.get("is_follow_up", False)
     saved_context = state.get("context_history", [])
     audit_wiki=state.get("audit_wiki","")
+    alignment_status=state.get("alignment_status")
+    narrative_conlfict_score=state.get("narrative_conflict_score")
+    divergence_type =state.get("divergence_type")
+    divergence_reason =state.get("divergence_reason")
+    conflict_rationale = state.get("conflict_rationale")
     
     consolidated_block = ""
     if audit_wiki and is_follow_up:
@@ -69,18 +87,16 @@ def unified_generator_node(state: AgentState):
     parser = JsonOutputParser(pydantic_object=FinalGeneration)
     
     # 1. Coordinate-Based Context Construction
-    """
-    context_str = ""
-    for c in raw_context:
-        context_str += f"--- [COORD: {c['SOURCE']} | PAGE: {c['PAGE']}] ---\n{c['CONTENT']}\n\n"
-    print(context_str)
-    """
+    
+    evidence = extract_from_verified_evidence(raw_context)
+    print(f"evdience:{evidence}")
+ 
     if is_follow_up:
         # In a follow-up, we show the hierarchy: Wiki [1], History [2], New [3]
-        final_context_for_llm = f"{consolidated_block}\n### [3] NEW INVESTIGATION FINDINGS:\n{raw_context}"
+        final_context_for_llm = f"{consolidated_block}\n### [3] NEW INVESTIGATION FINDINGS:\n{evidence}"
     else:
         # In Turn 1, there is no [1] or [2], so we just give it [3]
-        final_context_for_llm = f"### [3] NEW INVESTIGATION FINDINGS:\n{raw_context}"
+        final_context_for_llm = f"### [3] NEW INVESTIGATION FINDINGS:\n{evidence}"
 
     follow_up_instruction=" "
     if is_follow_up:
@@ -172,7 +188,13 @@ def unified_generator_node(state: AgentState):
         previous_draft=previous_draft,  # Logic handled!
         query_type= query_type,
         math_result=math_result,
-        final_context_str=final_context_for_llm
+        final_context_str=final_context_for_llm,
+        alignment_status = alignment_status,
+        narrative_conflict_score =narrative_conlfict_score,
+        divergence_type= divergence_type,
+        divergence_reason = divergence_reason,
+        conflict_rationale = conflict_rationale
+
       
     )
     
@@ -221,31 +243,6 @@ def unified_generator_node(state: AgentState):
     final_report = plan_output.get("report")
     print(f"final_report:{final_report}")
     
-    
-    """
-    used_evidence= plan_output.get("used_evidence_texts")
-    print(f"used_evidence:{used_evidence}")
-    """
-    #get coords
-    coord_section= re.search(r'### USED_COORDINATES\n(.*?)(?=\n###|$)', final_report, re.DOTALL)
-    print(coord_section)
-    extracted_coords = []
-
-    if coord_section:
-        try:
-            section_text= coord_section.group(1)
-            json_blobs = re.findall(r'(\{.*?\})', section_text)
-
-            for blob in json_blobs:
-                try:
-                    clean_blob = blob.replace("'", '"') 
-                    extracted_coords.append(json.loads(clean_blob))
-                except json.JSONDecodeError:
-                    print(f"Skipping malformed coordinate: {blob}")
-                    print(extracted_coords)
-        except json.JSONDecodeError:
-            print("Failed to parse coordinates JSON")
-
 
     def clean_coords(val):
         if val is None: return ""
@@ -258,31 +255,9 @@ def unified_generator_node(state: AgentState):
         final_context = saved_context
     else:
     
-        cited_coords = {
-        (clean_coords(coord.get('source')).upper(), clean_coords(coord.get('page')).upper()) 
-        for coord in extracted_coords}
-        print(cited_coords)
-     
-        for c in raw_context:
-            c_source = clean_coords(c.get('source')).upper()
-            c_page = clean_coords(c.get('page')).upper()
-            c_id = c.get('id') or f"{c_source}_{c_page}_{hash(c.get('evidence'))}" # Fallback ID
-            print(f"c_source:{c_source}")
-            print(f"c_page:{c_page}")
-            # Check 1: Does this chunk's Source and Page exist in the LLM's used_coordinates?
-            if (c_source,c_page) in cited_coords:
-                print("match_data_found")
-                
-                # Check 2: Does this specific chunk contain one of the snippets?
-                if c_id not in unique_final_context_map:
-                    unique_final_context_map[c_id] = c
-        final_context=list(unique_final_context_map.values())
-        print(final_context)
-        
-        print("final_context_appended")
+        final_context=raw_context
     
-        
-        
+    """
     #APPEND CONTETX HISTORY
     # 1. Initialize a clean string for the NEW evidence found in this run
     current_evidence_str = "\n\n### AUDIT EVIDENCE & SOURCE CITATIONS (NEW):\n"
@@ -303,8 +278,11 @@ def unified_generator_node(state: AgentState):
         # Just the new report and its evidence
         final_report_with_evidence = f"{final_report}\n{current_evidence_str}"
         print("final_report appended with evidence")
-     
-    score= plan_output.get("narrative_conflict_score")
+    """
+    
+    final_report_with_evidence = f"{final_report}\n{raw_context}"
+    print("final_report appended with evidence")
+    score= state.get("narrative_conflict_score")
     if score>1:
         print("Alert!!! divergence detected")
     else:

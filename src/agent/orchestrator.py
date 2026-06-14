@@ -14,7 +14,7 @@ from src.agent.nodes.extractor import math_extractor_node
 from typing import List
 from src.agent.state import AgentState
 from src.agent.nodes.retrieval_auditor import retrieval_auditor_node
-
+from src.agent.nodes.divergence_analyst import divergence_analyst_node
 
 def route_after_auditor(state:AgentState):
     return state.get("target_node")
@@ -59,7 +59,13 @@ def route_cache(state):
     else:
         print("continue to planner")
         return "continue"
-    
+
+def route_after_python_repl(state):
+    if state.get("type")=="C":
+        return "divergence_analyst"
+    else:
+        return "generator"
+
 
 def route_after_human(state:AgentState):
     decision=state.get("human_decision")
@@ -81,6 +87,7 @@ workflow.add_node("guard",system_1_guard)
 workflow.add_node("planner",planner_node)
 workflow.add_node("retriever_auditor",retrieval_auditor_node)
 workflow.add_node("extractor",math_extractor_node)
+workflow.add_node("divergence_analyst",divergence_analyst_node)
 workflow.add_node("generator",unified_generator_node)
 workflow.add_node("auditor",audit_engine)
 workflow.add_node("retriever",hybrid_retriever_node)
@@ -112,7 +119,8 @@ workflow.add_conditional_edges(
 workflow.set_entry_point("guard")
 workflow.add_edge("retriever","retriever_auditor")
 workflow.add_edge("extractor","python_repl")
-workflow.add_edge("python_repl","generator")
+workflow.add_edge("python_repl","divergence_analyst")
+workflow.add_edge("divergence_analyst","generator")
 workflow.add_edge("generator","user_auditor")
 workflow.add_edge("user_auditor","auditor")
 workflow.add_edge("cache_add", END)
@@ -127,6 +135,17 @@ workflow.add_conditional_edges(
         "human_review": "human_review"
     }
 )
+
+workflow.add_conditional_edges(
+    "python_repl",
+    route_after_python_repl,
+    {    
+        "generator": "generator", # NEW: Links 'investigate' to the cache node
+        "divergence_analyst": "divergence_analyst"
+      
+    }
+)
+
 
 workflow.add_conditional_edges(
     "human_review",
