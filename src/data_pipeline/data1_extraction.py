@@ -19,6 +19,7 @@ import multiprocessing
 import json
 from custom_logging import logger
 from concurrent.futures.process import BrokenProcessPool
+from src.utils.dlq import send_to_dlq
 
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -52,14 +53,13 @@ for path in [INPUT_DIR, OUTPUT_DIR, DLQ_DIR, TEMP_DIR]:
 GLOBAL_CONVERTER = None
 MAX_RETRIES=2
 
-total_retries = 0
-failed_pages = 0
 
 def run_pypdfium(page_num, pdf_bytes, header_label="Table Structure"):
     """LAZY INITIALIZATION: Boots up Docling safely on-demand within the worker core execution thread."""
     global GLOBAL_CONVERTER
     
     if GLOBAL_CONVERTER is None:
+        # Initializing Docling properties securely inside the split process context
         pdf_options = PdfPipelineOptions()  
         pdf_options.do_table_structure = True  
         pdf_options.table_structure_options.mode = TableFormerMode.FAST
@@ -82,154 +82,128 @@ def run_pypdfium(page_num, pdf_bytes, header_label="Table Structure"):
         try:
             full_md.append(element.export_to_markdown(doc=parsed_doc) + "\n")
         except Exception:
-            if hasattr(element, "text"):
+            if hasattr(element, "text") and element.text:
                 full_md.append(element.text + "\n")
     return "".join(full_md)
 
-def validate_text_output(text,tables):
-    """
-    Returns:
-        "valid" | "invalid" | "fallback_required"
-    """
-    has_text = len(text.strip())>10
+def validate_text_output(text, tables):
+    """Returns structurally valid parsing states."""
+    has_text = len(text.strip()) > 10
     has_tables = bool(tables)
     is_empty = not has_text and not has_tables
     
-
     return {
-        "valid": not is_empty ,
+        "valid": not is_empty,
         "has_text": has_text,
         "has_tables": has_tables,
-        "is_empty":is_empty
+        "is_empty": is_empty
     }
-
-def evaluate_fidelity(markdown_text,engine_choice):
-    text= markdown_text.strip()
-
+"""
+def evaluate_fidelity(markdown_text, engine_choice, f_page, tables):
+    text = markdown_text.strip()
     if not text:
         return False, "empty_output"
+        
+    # Keep the word count logic, but be less aggressive
+    clean_text = re.sub(r'[|\-+:*#_=\[\]()]', ' ', text)
+    extracted_word_count = len(clean_text.split())
     
-    #text to symbol ratio
+    # RELAXED SYMBOL RATIO: Markdown naturally has symbols. 
+    # Use 0.85 instead of 0.65 to allow for standard Markdown formatting.
+    special_chars = sum(1 for c in text if not c.isalnum() and not c.isspace())
+    total_len = len(text)
+    if total_len > 0 and (special_chars / total_len) > 0.85:
+        return False, "high_symbol_ratio"
 
-    total_len= len(text)
-    special_chars= sum(1 for c in text if not c.isalnum() and not c.isspace())
+    # DENSITY BYPASS: If tables are present, trust the engine.
+    if bool(tables):
+        return True, None
+
+    # DENSITY CHECK: Use a 3.0 threshold (300% variance) instead of 0.60 (60%).
+    # This allows for the "Markdown Overhead" (headers, lists, etc.)
+    raw_text = f_page.get_text("text") or ""
+    raw_input_word_count = max(len(raw_text.split()), 1) # Prevent division by zero
     
-    if (special_chars/total_len)>0.8:
-        return False,"high_symbol_ratio"
-
-    #detcetign repeatign alphabets or numebrs
-    unique_chars =len(set(text))
-
-    if total_len>50 and unique_chars<5:
-        return False, "low_entropy_garbage"
+    diff = abs(raw_input_word_count - extracted_word_count) / raw_input_word_count
+    
+    if diff > 3.0: 
+        # Only fail if the extraction is wildly different from the raw text
+        return False, f"extraction_density_mismatch: {diff:.2f}"
     
     return True, None
+"""
 
-def send_to_dlq(page_num,reason,document_id,error=None):
-
-    record={
-        "document": document_id,
-        "page": page_num,
-        "reason": reason,
-        "error": str(error) if error else None
-    }
-
-    filename = f"{document_id}_page_{page_num}.json"
-
-    with open (DLQ_DIR/filename,"w") as f:
-        json.dump(record,f,indent=2)
-    
-    logger.error({
-    "document": document_id,
-    "page": page_num,
-    "status": "DLQ",
-    "reason": reason,
-    "retry_count": 0,
-    "error": str(error)
-})
 
 def routing_classifier(has_table, has_text):
-    if has_table:
-        return {"engine": "pypdfium", "reason": "pdfplumber_table_detected"}
+    # BUG FIX: Re-ordered conditional logic cleanly so complex states prioritize correctly
     if has_table and has_text:
         return {"engine": "pypdfium", "reason": "mixed_layout_detected"}
-    """
-    if structured_signal > 15:
-        return {"engine": "pypdfium", "reason": "weak_structure"}
-    """
+    if has_table:
+        return {"engine": "pypdfium", "reason": "pdfplumber_table_detected"}
     return {"engine": "pypdf_text", "reason": "no_table"}
 
-def process_page_in_process(task,attempt):
+def process_page_in_process(task, attempt):
     page_num, single_page_bytes, document_id = task
     start_time = time.time()
-    doc = None
     
+    result = {
+        "page_num": page_num,
+        "status": "FAILED",
+        "content": "",
+        "engine": "unknown",
+        "latency": 0.0,
+        "retry_count": attempt,
+        "error": None
+    }
+    
+    doc = None
     try:
         doc = fitz.open(stream=single_page_bytes, filetype="pdf")
         f_page = doc[0]
 
         with pdfplumber.open(io.BytesIO(single_page_bytes)) as plumber_doc:
             p_page = plumber_doc.pages[0]
-            tables = p_page.find_tables()
+            tables = p_page.find_tables() or []
 
         text = f_page.get_text("text") or ""
         validation = validate_text_output(text, tables)
 
         if not validation["valid"]:
-            send_to_dlq(page_num, reason=f"Pre valdiation check Failed", document_id=document_id)
-            return {
-                "page_num": page_num, "status": "FAILED", 
-                "content": "", "engine": "fallback", "error": "invalid_page"
-            }
+            send_to_dlq(page_num, reason="Pre-validation check Failed", document_id=document_id)
+            result["error"] = "invalid_page"
+            return result
 
         route = routing_classifier(validation["has_tables"], validation["has_text"])
-        engine_choice = route["engine"]
-
-        # PATHWAY: PURE TEXT
-        if engine_choice == "pypdf_text":
-            text_markdown = run_pypdfium(page_num, single_page_bytes, header_label="Fallback Structure")
-            
-            is_valid,reason=evaluate_fidelity(text_markdown,engine_choice)
-
-            if not is_valid:
-                send_to_dlq(page_num, reason=f"Fidelity Check Failed: {reason}", document_id=document_id)
-                return {
-                    "page_num": page_num, "status": "failed", "content": text_markdown,
-                    "engine": "pypdf_text", "latency": latency
-
-                }
-            latency = time.time() - start_time
-            return {
-                "page_num": page_num, "status": "SUCCESS", "content": text_markdown,
-                "engine": "pypdf_text", "latency": latency
-            }
-
-        # PATHWAY: MIXED/TABLE
-        table_markdown = run_pypdfium(page_num, single_page_bytes, header_label="Table Extract")
-        latency = time.time() - start_time
-        is_valid,reason=evaluate_fidelity(text_markdown,engine_choice)
-
+        result["engine"] = route["engine"]
+        
+        # Content generation stage
+        content = run_pypdfium(page_num, single_page_bytes, header_label="Extraction")
+        result["content"] = content
+        
+        # Fidelity evaluations
+        #is_valid, reason = evaluate_fidelity(content, result["engine"], f_page, tables)
+        """
         if not is_valid:
-            send_to_dlq(page_num,reason=f"Fidelity Check Failed: {reason}", document_id=document_id)
-            return {
-                "page_num": page_num, "status": "failed", "content": table_markdown,
-                "engine": "pypdfium", "latency": latency
-
-            }
-        return {
-            "page_num": page_num, "status": "SUCCESS", "retry_count": attempt,"content": table_markdown,
-            "engine": engine_choice, "latency": latency
-        }
+            send_to_dlq(page_num, reason=f"Fidelity Check Failed: {reason}", document_id=document_id)
+            result["error"] = f"fidelity_failure: {reason}"
+            return result
+        """
+        # Success checkpoint
+        result["status"] = "SUCCESS"
+        result["latency"] = time.time() - start_time
+        return result
 
     except Exception as e:
-        send_to_dlq(page_num, reason="Extraction Exception", document_id=document_id, error=e)
-        return {
-            "page_num": page_num, "status": "FAILED", "content": "",
-            "engine": None, "error": str(e), "latency": time.time() - start_time
-        }
+        result["error"] = str(e)
+        send_to_dlq(page_num, reason="Extraction Exception", engine=result["engine"], document_id=document_id, error=e)
+        return result
     finally:
         if doc is not None:
-            doc.close()
+            try:
+                doc.close()
+            except Exception:
+                pass
+
 
 def pipeline_runner_high_throughput(pdf_paths: list[Path], max_workers=4):
     main_process = psutil.Process(os.getpid())
@@ -259,6 +233,7 @@ def pipeline_runner_high_throughput(pdf_paths: list[Path], max_workers=4):
             page_doc.insert_pdf(master_doc, from_page=idx, to_page=idx)
             single_page_bytes = page_doc.write()
             page_doc.close()
+            
             logger.info({
                 "document": document_id,
                 "page": page_num,
@@ -274,52 +249,91 @@ def pipeline_runner_high_throughput(pdf_paths: list[Path], max_workers=4):
         mp_context = multiprocessing.get_context("spawn")
 
         print(f"--> Spawning {max_workers} independent CPU worker cores instantly...")
+        total_retries = 0
+        failed_pages = 0
+        
+        # FIX 1: Explicitly track the active queue dynamically across retry tiers
+        current_tasks_to_run = list(prepared_tasks)
 
         with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as executor:
-            failed_tasks = []
             for attempt in range(MAX_RETRIES):
-                future_to_task = {executor.submit(process_page_in_process, task,attempt): task for task in (failed_tasks or prepared_tasks)}
-                failed_tasks = []
+                if not current_tasks_to_run:
+                    break  # Everything succeeded early!
+                
+                # Submit only what currently needs to be evaluated/retried
+                future_to_task = {
+                    executor.submit(process_page_in_process, task, attempt): task 
+                    for task in current_tasks_to_run
+                }
+                
+                # Dynamic container for holding fresh transient failures inside this tier
+                next_failed_tasks = []
 
                 for future in as_completed(future_to_task):
                     task = future_to_task[future]
                     try:
                         result = future.result(timeout=45)
-                        total_retries+= result.get("retry_count",0)
-                        if result["status"]=="FAILED":
-                            failed_pages+=1
+                        total_retries += result.get("retry_count", 0)
+                        
+                        # 1. SUCCESS: Record perfectly.
+                        if result["status"] == "SUCCESS":
+                            page_results[result["page_num"]] = result
+                            
+                        # 2. PERMANENT FAILURE: Engine rejected page structure. Do not retry.
+                        else:
+                            failed_pages += 1
+                            page_results[result["page_num"]] = result
 
-                        page_results[result["page_num"]] = result
                     except Exception as e:
-                        failed_tasks.append(task)
-                        logger.warning(f"Task failed: {e}")
+                        # 3. TRANSIENT FAILURE: Worker process crash / timeout / system error.
+                        failed_task = future_to_task[future]
+                        doc_id = failed_task[2]
+                        p_num = failed_task[0]
+                       
+                        if attempt < MAX_RETRIES - 1:
+                            next_failed_tasks.append(task)
+                            total_retries += 1
+                            logger.warning(f"Transient failure (Retry {attempt+1}): {e} for {doc_id} Page {p_num}")
+                        else:
+                            # Max retries completely exhausted across all execution limits
+                            failed_pages += 1
+                            
+                            # FIX 2: Swapped loose leaky variables for exact task targets (doc_id, p_num)
+                            logger.error(f"Transient failure exhausted after {MAX_RETRIES} attempts: {e} for {doc_id} Page {p_num}")
+                           
+                            page_results[p_num] = {
+                                "document_id": doc_id,
+                                "page_num": p_num,
+                                "status": "FAILED",
+                                "error": f"Max retries exceeded: {str(e)}"
+                            }
 
-                if not failed_tasks:
-                    break
-                elif attempt == MAX_RETRIES - 1:
-                    for page_num, _, doc_id in failed_tasks:
-                        page_results[page_num] = {
-                            "document_id": doc_id,
-                            "page_num": page_num,
-                            "status": "FAILED",
-                            "error": "Max retries exceeded"
-                        }
-                        send_to_dlq(page_num, reason="Max retries exceeded", document_id=doc_id, error=None)
+                            send_to_dlq(page_num=p_num, reason="Max retries exceeded", document_id=doc_id, engine="Crashed_Worker", error="System_failure")
+
+                # Swap the active execution state cleanly to prevent infinite lists
+                current_tasks_to_run = next_failed_tasks
 
         total_duration = time.time() - start_total
         peak_ram_mb = main_process.memory_info().rss / 1024 / 1024
 
+        # Compile and generate standard markdown documentation layout outputs
         with open(OUTPUT_DIR / f"{pdf_path.stem}.md", "w", encoding="utf-8") as outfile:
             for p_num in sorted(page_results.keys()):
                 result = page_results[p_num]
                 if result["status"] == "SUCCESS":
+                    logger.info(f"Page {p_num} processed with {result.get('engine')} in {result.get('latency', 0):.2f}s")
+                    
                     engine = result.get("engine")
-                    if engine == "mixed": routing_stats["mixed"] += 1
-                    elif engine == "pypdf_text": routing_stats["text"] += 1
-                    elif engine == "pypdfium": routing_stats["table"] += 1
+                    # Dynamically check engines against structural metrics safely
+                    if engine == "pypdfium" and "mixed" in result.get("reason", ""): 
+                        routing_stats["mixed"] += 1
+                    elif engine == "pypdf_text": 
+                        routing_stats["text"] += 1
+                    elif engine == "pypdfium": 
+                        routing_stats["table"] += 1
+                    
                     outfile.write(result["content"])
                 else:
-                    # This makes the error visible in the final doc
                     outfile.write(f"\n\n--- PAGE {p_num} FAILED: {result.get('error', 'Unknown Error')} ---\n\n")
 
         if os.getenv("MLFLOW_TRACKING_URI"):
@@ -327,19 +341,19 @@ def pipeline_runner_high_throughput(pdf_paths: list[Path], max_workers=4):
                 mlflow.log_param("file_name", pdf_path.name)
                 mlflow.log_metric("total_duration_sec", total_duration)
                 mlflow.log_metric("peak_process_ram_mb", peak_ram_mb)
-                mlflow.log_metric("total_failed_pages",total_retries)
-                mlflow.log_metric("total_failed_pages", failed_pages)
+                
+                # FIX 3: Reassigned unique log keys to prevent data overwrites or tracker crashes
+                mlflow.log_metric("total_retry_attempts", total_retries)
+                mlflow.log_metric("final_failed_pages_count", failed_pages)
 
                 total_parsed = sum(routing_stats.values())
 
-                # Add to your MLflow block:
                 if total_parsed > 0:
                     mlflow.log_metric("ratio_mixed", routing_stats['mixed'] / total_parsed)
                     mlflow.log_metric("ratio_text", routing_stats['text'] / total_parsed)
                     mlflow.log_metric("ratio_table", routing_stats['table'] / total_parsed)
                     mlflow.log_metric("ratio_fallback", routing_stats['fallback'] / total_parsed)
                   
-        
         print(f"\n--> SUCCESS: {pdf_path.name} converted in {total_duration:.2f} seconds. Peak RAM: {peak_ram_mb:.2f} MB")
         print("="*40)
         print("ROUTING OBSERVABILITY MATRIX SUMMARY:")

@@ -16,6 +16,7 @@ BASE_DIR= Path(os.getenv("DATA_DIR"))
 
 MASKED_DIR= BASE_DIR/"masked"
 
+
 COLLECTION_NAME= "financial_reports"
 
 
