@@ -10,6 +10,7 @@ from src.utils.prompt_manager import PromptManager
 from langchain_core.prompts import ChatPromptTemplate
 import asyncio
 from langchain_core.runnables import RunnableConfig
+from custom_logging import logger
 
 promptloader= PromptManager()
 perf_cb=PerformanceCallback()
@@ -64,7 +65,7 @@ async def retrieval_auditor_node(state:AgentState):
     context= state.get("context")
     evidence_found=[]
     combined_critique=[]
-    existing_final_context = state.get("final_context", [])
+    existing_final_context = state.get("final_context", []) 
     
 
     plan = state.get("plan", [])
@@ -75,9 +76,18 @@ async def retrieval_auditor_node(state:AgentState):
     compressed_evidence= await query_aware_compression(context,current_query,planner_tasks)
     print(f"compressed_evidence_summary:{compressed_evidence}")
 
-    node_config = promptloader.prompts.get('retriever_auditor', {})
-    raw_template = node_config.get('retriever_auditor_prompt')
-    prompt_version = node_config.get('version', '1.0.0')
+    try:
+        node_config = promptloader.prompts.get('retriever_auditor', {})
+
+        raw_template = node_config.get('retriever_auditor_prompt')
+        prompt_version = node_config.get('version', '1.0.0')
+    
+    except Exception as e:
+        logger.exception(e)
+        return {
+             "retrieval_auditor_failed": True
+       
+        }
     current_attempts = state.get("retriever_audit_attempts", 0)
 
     prompt = raw_template.format(
@@ -87,11 +97,19 @@ async def retrieval_auditor_node(state:AgentState):
     print(f"!!! DISPATCHING: {planner_tasks.title}")
   
     # .ainvoke is the ASYNC version of .invoke
-    response = await structured_llm.ainvoke(
-        prompt, 
-        config={"callbacks": [perf_cb]}
-    )
-    print(f"DEBUG: Task {planner_tasks.title} finished at {time.time()}")
+    try:
+        response = await structured_llm.ainvoke(
+            prompt, 
+            config={"callbacks": [perf_cb]}
+        )
+        print(f"DEBUG: Task {planner_tasks.title} finished at {time.time()}")
+    except Exception:
+        logger.exception(
+            f"Retrieval Auditor LLM invocation failed | prompt_version={prompt_version}"
+        )
+        return {
+            "retrieval_auditor_failed": True
+        }
  
 
     # 3. MERGE THE RESULTS
@@ -126,7 +144,10 @@ async def retrieval_auditor_node(state:AgentState):
 
     node_results = metrics_getter(state)
     node_results["prompt_version"] = prompt_version
-    log_to_mlflow("retrieval_auditor",node_results,step=current_turn)
+    try:
+        log_to_mlflow("retrieval_auditor",node_results,step=current_turn)
+    except Exception as e:
+        logger.warning(f"MLflow node logging failed: {e}")
 
     needs_revision=output.needs_revision
     print(f"need_revision{needs_revision}")
@@ -135,7 +156,9 @@ async def retrieval_auditor_node(state:AgentState):
     all_evidence = existing_audit_wiki + evidence_found
 
 
+
     if needs_revision is True:
+        combined_critique.append(output.retriever_critique)
         print("needs_revision")
         current_attempts += 1
         
@@ -150,7 +173,7 @@ async def retrieval_auditor_node(state:AgentState):
         "final_context": all_contexts,
         "retriever_feedback": output,
         "retriever_audit_attempts": current_attempts,
-        "critique":   combined_critique,
+        "critique":  combined_critique,
         "steps": [
             f"Audit attempt: {current_attempts}",
             f"Feedback: {combined_critique[:100]}...",

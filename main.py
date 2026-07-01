@@ -88,7 +88,23 @@ async def run_nike_audit():
                             micro_benchmarks = state.values.get("node_benchmarks", {})
                             system_latency = sum(m['latency'] for m in micro_benchmarks.values())
                             mlflow.log_metric("system_latency",system_latency)
-                            
+
+                            if state.values.get("ask_user"):
+                                print("\nClarification Required")
+                                print(state.values.get("clarifictaion_question"))
+                                clarification= await async_input("")
+
+                                await app.update_state(config,{
+                                    "query":clarification,
+                                    "query_history":[clarification],
+                                    "is_follow_up":True,
+                                    "ask_user":False
+                                },
+                                as_node="planner"
+                                )
+
+                                await app.ainvoke(None,config)
+                                continue
                             
                             if "human_review" in state.next:
                                 print("\n" + "="*50)

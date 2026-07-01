@@ -6,6 +6,8 @@ import time
 from src.utils.monitoring import log_to_mlflow
 from src.utils.prompt_manager import PromptManager
 from langchain_core.prompts import ChatPromptTemplate
+from custom_logging import logger
+
 
 promptloader= PromptManager()
 perf_cb=PerformanceCallback()
@@ -33,9 +35,18 @@ def math_extractor_node(state: AgentState):
     start_ts= time.time()
     contexts = state.get("context", [])
     current_turn = state.get("turn_count", 0) + 1
-    node_config = promptloader.prompts.get('extractor', {})
-    raw_template = node_config.get('extractor_prompt')
-    prompt_version = node_config.get('version', '1.0.0')
+
+    try:
+        node_config = promptloader.prompts.get('extractor', {})
+        raw_template = node_config.get('extractor_prompt')
+        prompt_version = node_config.get('version', '1.0.0')
+
+    except Exception as e:
+        logger.exception(e)
+        return {
+             "extractor_failed": True
+       
+        }
     query=state.get("query")
 
     if not contexts:
@@ -53,20 +64,34 @@ def math_extractor_node(state: AgentState):
         query=query,
         context_text=context_text
     )
+    
     structured_llm = resilient_brain.with_structured_output(MathPlan,include_raw=True)
-
+    
+    try:
     # 5. Execute
-    extraction = structured_llm.invoke(
-    extractor_prompt, 
-    config={"callbacks": [perf_cb]}
-)
+        extraction = structured_llm.invoke(
+        extractor_prompt, 
+        config={"callbacks": [perf_cb]}
+    )
+    except Exception:
+        logger.exception(
+            f"Extractor failed | prompt_version={prompt_version}"
+        )
+        return {
+            "extractor_failed": True
+        }
     plan_output= extraction["parsed"]
     metrics_getter= get_node_metrics("math_extractor",extraction,perf_cb,start_ts)
     
     node_results = metrics_getter(state)
     node_results["prompt_version"] = prompt_version
-    log_to_mlflow("math_extractor",node_results,step=current_turn)
-    
+
+    try:
+        log_to_mlflow("math_extractor",node_results,step=current_turn)
+    except Exception as e:
+        logger.warning(f"MLflow node logging failed: {e}")
+
+     
     metric_summary= ", ".join([f"{m.label}:{m.value}"for m in plan_output.metrics])
     return {
         "math_plan": plan_output,

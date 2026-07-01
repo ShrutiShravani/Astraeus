@@ -17,7 +17,23 @@ from src.agent.nodes.retrieval_auditor import retrieval_auditor_node
 from src.agent.nodes.divergence_analyst import divergence_analyst_node
 
 def route_after_auditor(state:AgentState):
+    if state.get("audit_engine_failed"):
+        return "end"
     return state.get("target_node")
+
+
+def route_after_extractor(state:AgentState):
+    if state.get("extractor_failed"):
+        return "end"
+    
+    return "python_repl"
+
+
+def route_after_generator(state:AgentState):
+    if state.get("generator_failed"):
+        return "end"
+    
+    return "user_auditor"
 
 
 def route_after_planner(state: AgentState):
@@ -26,9 +42,12 @@ def route_after_planner(state: AgentState):
     if  len(state["plan"])==0:
         print("--- ROUTE: Direct to Generator (Wiki Match) ---")
         return "generator"
+    if state.get("planner_failed"):
+        return "end"      # or planner_failure_node
 
-    
     return "retriever"
+
+
 
 def route_after_retriever_auditor(state: AgentState):
     # This is where the decision happens!
@@ -37,7 +56,10 @@ def route_after_retriever_auditor(state: AgentState):
     needs_revision = feedback.needs_revision
     query_type = state["type"]
 
-    if needs_revision:
+    if state.get("retriever_auditor_failed"):
+        return "end"
+
+    elif needs_revision:
         if attempts>2:
             return "human_review"
         print(f"--- RETRIEVER REJECTED (Attempt {attempts}): LOOPING TO PLANNER ---")
@@ -63,6 +85,18 @@ def route_cache(state):
 def route_after_python_repl(state):
     if state.get("type")=="C":
         return "divergence_analyst"
+    else:
+        return "generator"
+
+def route_after_retriever(state):
+    if state.get("retriever_failed"):
+        return "end"
+    else:
+        return "retriever_auditor"
+
+def route_after_divergence_analyst(state):
+    if state.get("divergence_analyst_failed"):
+        return "end"
     else:
         return "generator"
 
@@ -115,13 +149,20 @@ workflow.add_conditional_edges(
         "continue": "planner"
     }
 )
+workflow.add_conditional_edges(
+    "divergence_analyst",
+    route_after_divergence_analyst,
+    {
+        "generator": "generator",
+        "end": END
+    }
+)
+
 
 workflow.set_entry_point("guard")
-workflow.add_edge("retriever","retriever_auditor")
-workflow.add_edge("extractor","python_repl")
-workflow.add_edge("python_repl","divergence_analyst")
-workflow.add_edge("divergence_analyst","generator")
-workflow.add_edge("generator","user_auditor")
+
+
+
 workflow.add_edge("user_auditor","auditor")
 workflow.add_edge("cache_add", END)
 
@@ -132,16 +173,38 @@ workflow.add_conditional_edges(
     route_after_auditor,
     {    
         "generator": "generator",
-        "human_review": "human_review"
+        "human_review": "human_review",
+        "end":END
     }
 )
+
+workflow.add_conditional_edges(
+    "generator",
+    route_after_generator,
+    {    
+        "user_auditor": "user_auditor",
+        "end": END
+    }
+)
+
+workflow.add_conditional_edges(
+    "extractor",
+    route_after_extractor,
+    {    
+        "python_repl": "python_repl", # NEW: Links 'investigate' to the cache node
+        "end":END
+      
+    }
+)
+
 
 workflow.add_conditional_edges(
     "python_repl",
     route_after_python_repl,
     {    
         "generator": "generator", # NEW: Links 'investigate' to the cache node
-        "divergence_analyst": "divergence_analyst"
+        "divergence_analyst": "divergence_analyst",
+        "end":END
       
     }
 )
@@ -167,6 +230,14 @@ workflow.add_conditional_edges(
     }
 )
 
+workflow.add_conditional_edges(
+    "retriever",
+    route_after_retriever,
+    {    
+        "retriever_auditor": "retriever_auditor",
+        "end": END
+    }
+)
 
 
 # In your graph definition:
@@ -177,7 +248,7 @@ workflow.add_conditional_edges(
         "generator": "generator",
         "extractor": "extractor",
         "planner":"planner",
-        "human_review": "human_review"
+        "end": END
     }
 )
 

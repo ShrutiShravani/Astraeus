@@ -9,6 +9,7 @@ from src.utils.prompt_manager import PromptManager
 import os
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
+from custom_logging import logger
 
 
 from src.utils import monitoring
@@ -46,10 +47,17 @@ def audit_engine(state: AgentState):
     current_query = state.get("query")
     planner_tasks = state.get("plan")
     generated_report= state.get("generation")
-    node_config = promptloader.prompts.get('audit_engine', {})
-    raw_template = node_config.get('audit_engine_prompt')
-    prompt_version = node_config.get('version', '1.0.0')
-    
+
+    try:
+        node_config = promptloader.prompts.get('audit_engine', {})
+        raw_template = node_config.get('audit_engine_prompt')
+        prompt_version = node_config.get('version', '1.0.0')
+    except Exception as e:
+        logger.exception(e)
+        return {
+             "audit_engine_failed": True
+       
+        }
 
     context_str = ""
     context = state.get("context_history",[])
@@ -86,16 +94,26 @@ def audit_engine(state: AgentState):
     user_content = f"Please audit the following report against the provided context for query: {current_query}"
     
     structured_llm = resilient_pro.with_structured_output(Reflection, include_raw=True) # Replace with your Pydantic class
+    
+    try:
+        response = structured_llm.invoke(
+        [
+            SystemMessage(content=audit_prompt),
+            HumanMessage(content=user_content)
+        ],
+        config={"callbacks": [perf_cb]}
+    )
 
-    response = structured_llm.invoke(
-    [
-        SystemMessage(content=audit_prompt),
-        HumanMessage(content=user_content)
-    ],
-    config={"callbacks": [perf_cb]}
-)
+    except Exception:
+        logger.exception(
+            f"Sudit Engine LLM invocation failed | prompt_version={prompt_version}"
+        )
+        return {
+            "audit_engine_failed": True
+        }
 
     output = response["parsed"]
+
     scores={
     "math_score":output.math_score,
     "traceability_score":output.traceability_score,
@@ -126,8 +144,12 @@ def audit_engine(state: AgentState):
     )
     node_results = metrics_getter(state)
     node_results["prompt_version"] = prompt_version
-    log_to_mlflow("audit_engine", node_results, step=current_turn)
 
+    try:
+        log_to_mlflow("audit_engine", node_results, step=current_turn)
+    except Exception as e:
+        logger.warning(f"MLflow node logging failed: {e}")
+        
     needs_revision = output.needs_revision
     
     

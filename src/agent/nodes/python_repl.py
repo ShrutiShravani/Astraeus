@@ -1,6 +1,7 @@
 from src.agent.state import AgentState
 import time
 from src.utils.monitoring import log_to_mlflow
+from custom_logging import logger
 
 def python_repl_node(state:AgentState):
     start_ts=time.time()
@@ -35,11 +36,20 @@ def python_repl_node(state:AgentState):
         node_latency= time.time()-start_ts
         node_metrics["node_benchmarks"]["python_repl"]["latency"] = round(node_latency, 3)
         node_metrics["prompt_version"] = "v1.1.0"
-        log_to_mlflow("python_repl", node_metrics, step=current_turn)
+
+        try:
+            log_to_mlflow("python_repl", node_metrics, step=current_turn)
+        except Exception as e:
+            logger.warning(f"MLflow node logging failed: {e}")
 
     
     except Exception as e:
         calc_value=f"Python execution error :str{e}"
+        logger.exception(e)
+        return {
+            "python_repl_failed": True
+        }
+    
 
     return {
         "calculation_result":calc_value,

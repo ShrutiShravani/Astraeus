@@ -44,7 +44,7 @@ planner :
     1. **MANDATORY WIKI-FIRST CHECK:**
       - Always check first whether [VERIFIED_FACTS] has facts or statements requried to answer the current query .
       - You are strictly forbidden from creating tasks for any Metric or Facts already present in [VERIFIED FACTS]. 
-      - If the query only asks for calculations based on Wiki data, create exactly ONE task with `doc_source="NONE"` and `zone="INTERNAL_LOGIC"`.
+      - If the query only asks for calculations based on [VERIFIED_FACTS], create exactly ONE task with `doc_source="NONE"` and `zone="INTERNAL_LOGIC"`.
     2. **INCREMENTAL RETRIEVAL:** If comparing 2021 (Wiki) to 2022 (New), only create tasks for 2022.
     3. **PRONOUN RESOLUTION:** "it", "this", or "the trend" refers to metrics in [VERIFIED FACTS].
     4. **INHERITANCE:** If company or year is missing from the query, use {locked_company} and {locked_year}.

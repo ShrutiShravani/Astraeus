@@ -9,7 +9,7 @@ from src.utils.monitoring import log_to_mlflow
 from src.utils.prompt_manager import PromptManager
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-import re
+from custom_logging import logger
 
 parser = JsonOutputParser(pydantic_object=DivergenceAnalyst)
 promptloader= PromptManager()
@@ -43,10 +43,18 @@ def divergence_analyst_node(state:AgentState):
     ]
 
     calculation_result= state.get("calculation_result")
-    node_config = promptloader.prompts.get('divergence_analyst', {})
-    raw_template = node_config.get('divergence_analyst_prompt')
-    prompt_version = node_config.get('version', '1.0.0')
 
+    try:
+        node_config = promptloader.prompts.get('divergence_analyst', {})
+        raw_template = node_config.get('divergence_analyst_prompt')
+        prompt_version = node_config.get('version', '1.0.0')
+    
+    except Exception as e:
+        logger.exception(e)
+        return {
+             "divergence_analyst_failed": True
+       
+        }
 
     # Fix: Cleaned up the double prompt nesting and clarified Type C instruction
     system_prompt = raw_template.format(
@@ -66,9 +74,17 @@ def divergence_analyst_node(state:AgentState):
         HumanMessage(content=state["query"])
 ]
     
+    try:
 
-    result = structured_divergence.invoke(messages ,config={"callbacks":[perf_cb]})
-    print(f"result:{result}")
+        result = structured_divergence.invoke(messages ,config={"callbacks":[perf_cb]})
+        print(f"result:{result}")
+    except Exception:
+        logger.exception(
+            f"Divergnec Analyst LLM invocation failed | prompt_version={prompt_version}"
+        )
+        return {
+            "divergence_analyst_failed": True
+        }
     
     
     analysis_output = result["parsed"]
@@ -83,8 +99,11 @@ def divergence_analyst_node(state:AgentState):
     
     node_results = metrics_getter(state)
     node_results["prompt_version"] = prompt_version
-    log_to_mlflow("divergence_analyst",node_results,step=current_turn)
-    
+
+    try:
+        log_to_mlflow("divergence_analyst",node_results,step=current_turn)
+    except Exception as e:
+        logger.warning(f"MLflow node logging failed: {e}")
 
     return{
         "alignment_status":

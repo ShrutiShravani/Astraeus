@@ -9,8 +9,12 @@ import re
 from langchain_huggingface import HuggingFaceEmbeddings
 from pathlib import Path
 from datetime import datetime
+from src.utils.dlq import send_to_dlq
+from custom_logging import logger
+import time
 
 load_dotenv()
+MAX_RETRIES = 3
 
 BASE_DIR= Path(os.getenv("DATA_DIR"))
 
@@ -27,6 +31,9 @@ client = QdrantClient(url="http://localhost:6333")
 
 # Initialize Embeddings (Cost-optimized)
 #embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+total_failed=0
+
+total_retries=0
 
 def ensure_collection():
     collections=client.get_collections().collections
@@ -65,12 +72,12 @@ def ensure_collection():
     )
 
 def process_and_upload(md_files: list[Path]):
+    uploaded_chunks = 0
+    total_failed = 0
+    total_retries = 0
+    
     ensure_collection()
-    headers_to_split_on = [
-        ("#", "Header 1"),
-        ("##", "Header 2"),
-        ("###", "Header 3"),
-    ]
+   
     
     # 1. Initialize Vectorstore ONCE
     vectorstore = QdrantVectorStore(
@@ -89,6 +96,7 @@ def process_and_upload(md_files: list[Path]):
     # 3. Process Files
     for md_path in md_files:
         filename = md_path.name
+        document_id = md_path.stem
         
         company, year = robust_metadata_extractor(filename)
         if not company or not year:
@@ -105,7 +113,7 @@ def process_and_upload(md_files: list[Path]):
         content = md_path.read_text(encoding="utf-8")
 
         
-        page_blocks = re.split(r"## PAGE (\d+)\n", content)
+        page_blocks = re.split(r"## PAGE (\d+).*?\n", content)
         all_docs = []
 
         # Process all pages first
@@ -114,6 +122,7 @@ def process_and_upload(md_files: list[Path]):
         for i in range(start_idx, len(page_blocks), 2):
             current_page_number = int(page_blocks[i])
             current_page_content = page_blocks[i+1]
+            chunk_no=1
             current_page_content = re.sub(r"^={10,}\n+", "", current_page_content)
             
             md_header_splits = markdown_splitter.split_text(current_page_content)
@@ -129,24 +138,66 @@ def process_and_upload(md_files: list[Path]):
                     if len(chunk.page_content.strip()) < 10:
                         continue
                     chunk.metadata={
+                        "document_id": md_path.stem,
                         "company": company,
                         "year": int(year),
                         "source": filename,
-                        "page": current_page_number,
+                        "page_num": current_page_number,
                         "doc_type": doc_type
                     }
                     all_docs.append(chunk)
-
+                    chunk_no += 1  
+                
         # 4. UPLOAD ONCE PER FILE (Correct Indentation)
         print(f"Uploading {len(all_docs)} total chunks for {company}...")
         batch_size = 50
+
         for j in range(0, len(all_docs), batch_size):
+            batch_start = time.time()
+
             batch = all_docs[j : j + batch_size]
-            try:
-                vectorstore.add_documents(documents=batch)
-                print(f"Done: {company} {year} | Batch {j}-{j+len(batch)}")
-            except Exception as e:
-                print(f"Error uploading {company}: {e}")
+            pages=sorted({doc.metadata['page_num'] for doc in batch})
+            page_range=(str(pages[0]) if len(pages)==1 else f"{pages[0]}-{pages[-1]}")
+            if len(batch)==0:
+                continue
+
+            for attempt in range(MAX_RETRIES):
+                try:
+                    ids= [doc.metadata["chunk_id"] for doc in batch]
+                    vectorstore.add_documents(documents=batch,id=ids)
+                    print(f"Done: {company} {year} | Batch {j}-{j+len(batch)}")
+                    uploaded_chunks+=len(batch)
+                    latency = time.time() - batch_start
+                    logger.info({
+                        "document":document_id,
+                        "page_range": page_range,
+                        "latency":latency,
+                        "chunks": len(batch)
+                    })
+                    break
+                except Exception as e:
+                    if attempt < MAX_RETRIES - 1:
+                        total_retries+=1
+                        continue
+                    
+                    else:
+                        print(f"Error uploading {company}: {e}")
+                        send_to_dlq(
+                                    document_id=document_id,
+                                    stage="masking", 
+                                    page= page_range,
+                                    reason="Batch failed", 
+                                    engine= None,
+                                    error=e
+                                )
+                        
+                        logger.error({
+                            "document": document_id,
+                            "chunks": len(batch),
+                            "page_range": page_range,
+                            "error": str(e)
+                        })
+                        total_failed+=len(batch)
     
     with open ("data/vector_store_status.txt", "w") as f:
         f.write(f"Indexed {len(all_docs)} chunks on {datetime.now()}")

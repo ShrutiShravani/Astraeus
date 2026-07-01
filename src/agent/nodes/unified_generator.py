@@ -10,6 +10,7 @@ from src.utils.prompt_manager import PromptManager
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 import re
+from custom_logging import logger
 
 
 promptloader= PromptManager()
@@ -78,10 +79,18 @@ def unified_generator_node(state: AgentState):
         # Scenario: Hybrid (Some New, Some Wiki)
         # We add a virtual task to remind the LLM to integrate existing facts
          active_task_list.append(f"[INTEGRATION]: Reconcile the new findings with existing metrics in the VERIFIED FINANCIAL DATA and and PREVIOUS NARRTAIVE EVIDENCE")
+    
+    try:
+        node_config = promptloader.prompts.get('unified_generator', {})
+        raw_template = node_config.get('unified_generator_prompt')
+        prompt_version = node_config.get('version', '1.0.0')
+    except Exception as e:
+        logger.exception(e)
+        return {
+             "generator_failed": True
+       
+        }
 
-    node_config = promptloader.prompts.get('unified_generator', {})
-    raw_template = node_config.get('unified_generator_prompt')
-    prompt_version = node_config.get('version', '1.0.0')
     final_report_with_evidence = ""
  
     parser = JsonOutputParser(pydantic_object=FinalGeneration)
@@ -206,40 +215,68 @@ def unified_generator_node(state: AgentState):
         ("human", "{user_content}")
     ])| resilient_pro)
     
-    full_response = None
-    
-    input_map={
-        "system_prompt_format": system_prompt_format,
-        "user_content": user_content
-    }
-    for chunk in generator_chain.stream(
-        input_map,
-         config={"callbacks": [perf_cb]}
-    ):
-     if full_response is None:
-        full_response=chunk
-     else:
-        full_response+=chunk
+    try:
+        full_response = None
+        
+        input_map={
+            "system_prompt_format": system_prompt_format,
+            "user_content": user_content
+        }
+        for chunk in generator_chain.stream(
+            input_map,
+            config={"callbacks": [perf_cb]}
+        ):
+            if full_response is None:
+                full_response=chunk
+            else:
+                full_response+=chunk
+
+      
+    except Exception as e:
+        logger.exception(
+            f"Generator LLM invocation failed | prompt_version={prompt_version}"
+        )
+        return {
+            "generator_failed": True
+        }
 
     raw_text= full_response.content
     if not raw_text or len(raw_text.strip())==0:
-        raise ValueError("LLM returned an emoty string.Check your input_mp or model connection")
+        logger.error(
+        f"Generator returned empty response | prompt_version={prompt_version}"
+    )
+        return {
+            "generator_failed": True
+        }
 
     #clean tetx
     cleaned_text= raw_text.replace("```json", "").replace("```", "").strip()
 
     plan_output= parser.parse(cleaned_text)
-
+    
+    try:
     #get raw results for metrics calculation
-    raw_res_metrics= {
-        "raw":full_response,
-        "parsed":plan_output
-    }
+        raw_res_metrics= {
+            "raw":full_response,
+            "parsed":plan_output
+        }
+    except Exception as e:
+        logger.exception(
+            f"Generator JSON parsing failed | prompt_version={prompt_version}"
+        )
+        return {
+            "generator_failed": True
+        }
+        
     metrics_getter= get_node_metrics("unified_generator",raw_res_metrics,perf_cb,start_ts)
     
     node_results = metrics_getter(state)
     node_results["prompt_version"] = prompt_version
-    log_to_mlflow("unified_generator",node_results,step=current_turn)
+    try:
+        log_to_mlflow("unified_generator",node_results,step=current_turn)
+    except Exception as e:
+        logger.warning(f"MLflow node logging failed: {e}")
+
     final_report = plan_output.get("report")
     print(f"final_report:{final_report}")
     
@@ -249,7 +286,7 @@ def unified_generator_node(state: AgentState):
         return str(val).replace("-", "").replace(" ", "")
 
     final_context=[]
-    unique_final_context_map = {}
+
     if is_correction:
         # In a correction, the Retriever didn't run. Use the history we already have.
         final_context = saved_context

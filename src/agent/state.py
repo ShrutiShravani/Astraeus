@@ -179,6 +179,7 @@ class AgentState(TypedDict):
     force_refresh: bool 
     plan: List[Task]
     context:List[Dict]
+    planner_failed:bool
     math_plan: Optional[MathPlan]=None
     generation:str
     response:str
@@ -208,3 +209,10 @@ class AgentState(TypedDict):
     node_benchmarks: Annotated[dict, merge_node_metrics] # Set at the very beginning of the graph
     memory_usage: float # Captured at the end of the graph
     end_time_node:float
+    clarification_question:str
+    ask_user:bool
+    planner_failed: bool = False 
+    retriever_failed: bool = False 
+    retrieval_auditor_failed: bool = False 
+    generator_failed: bool = False
+    divergence_analyst_failed:bool=False

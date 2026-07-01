@@ -10,13 +10,15 @@ from src.utils.monitoring import PerformanceCallback
 from src.utils.get_metrics import get_node_metrics
 from src.utils.monitoring import log_to_mlflow
 from src.utils.prompt_manager import PromptManager
+from custom_logging import logger
+
 
 promptloader= PromptManager()
 
 perf_cb=PerformanceCallback()
 
 
-# Primary: Cheap & Fast
+# Primary: Cheap & Fast 
 llm_mini = ChatOpenAI(model="gpt-4o-mini",streaming=True,temperature=0, max_retries=5)
 
 # Backup: Smart & High-Limit (The Fallback)
@@ -54,9 +56,19 @@ def planner_node(state:AgentState):
 
     retrieved_feedback= state.get("retriever_feedback",[])
     print(retrieved_feedback)
-    node_config = promptloader.prompts.get('planner', {})
-    raw_template = node_config.get('planner_prompt')
-    prompt_version = node_config.get('version', '1.0.0')
+    try:
+        node_config = promptloader.prompts.get('planner', {})
+        raw_template = node_config.get('planner_prompt')
+        if not raw_template:
+            raise ValueError("planner prompt not found")
+        prompt_version = node_config.get('version', '1.0.0')
+    except Exception as e:
+        logger.exception(e)
+        return {
+             "planner_failed": True
+       
+        }
+
     audit_wiki=state.get("audit_wiki","")
     already_verified_facts= ",".join([f"Year: {item.year} | Company: {item.company} | Task: {item.task_name} | Evidence :{item.evidence} in {item.source} p.{item.page} {item.quote}"for item in audit_wiki])
     
@@ -88,28 +100,112 @@ def planner_node(state:AgentState):
     elif is_follow_up:
         # --- FOLLOW-UP/INVESTIGATE STATE (The Fix for your Hallucinations) ---
         purifier_prompt = f"""
-        Compare the User Query: "{current_query}" 
-        With Verified Facts: {already_verified_facts}
-        
-        TASK: Resolve all pronouns and identify the 'Knowledge Gap'.
-        1. If a value is in the Wiki, replace the name with 'NAME (VALUE)'.
-        2. If a value is MISSING, mark it as 'REQUIRED_FROM_SOURCE'.
-        
-        Example: "Compare 2019 margin to 2020." 
-        -> "Compare verified 2019 Margin (40%) with REQUIRED_FROM_SOURCE 2020 Margin."
-        
+        You are a Follow-up Query Resolver.
+
+        Your job is NOT to answer the question.
+
+        Your only job is to rewrite the user's query so that the Planner can decide what must be retrieved.
+
+        Inputs
+
+        Current User Query:
+        {current_query}
+
+        Conversation History:
+        {history}
+
+        Verified Facts:
+        {already_verified_facts}
+
+        Rules
+
+        1. Resolve all pronouns using Conversation History first.
+
+        2. Use Verified Facts only to determine whether information already exists.
+
+        3. If information already exists, rewrite it as
+
+        METRIC(VALUE)
+
+        Example
+
+        Revenue($394.3B)
+
+        4. If information is missing, rewrite it as
+
+        REQUIRED_FROM_SOURCE(metric)
+
+        Example
+
+        Compare Revenue($394.3B)
+        with REQUIRED_FROM_SOURCE(Gross Margin)
+
+        5. If multiple metrics match the user's reference,
+
+        return exactly
+
+        NEEDS_CLARIFICATION
+
+        followed by ONE clarification question.
+
+        Return ONLY the rewritten query.
         """
-        # We use the mini model to just do the 'Cleanup'
-        current_query = llm_mini.invoke(purifier_prompt).content
-        
-        # --- THE ACTUAL INSTRUCTION ---
+
+        current_query = llm_mini.invoke(purifier_prompt).content.strip()
+
+        # ------------------------------------------
+        # Clarification required
+        # ------------------------------------------
+
+        if current_query.startswith("NEEDS_CLARIFICATION"):
+
+            return {
+                "ask_user": True,
+                "clarification_question": current_query.replace(
+                    "NEEDS_CLARIFICATION",
+                    ""
+                ).strip(),
+                "steps": ["Planner requested clarification"]
+            }
+
+        # ------------------------------------------
+        # Continue planning
+        # ------------------------------------------
+
         planner_instruction = f"""
-        FOLLOW-UP MODE: You are extending an already existing audit.
-        - VERIFIED DATA: {already_verified_facts}.
-        - You have received a purified query: {current_query}
-        - Values in ( ) are verified. DO NOT fetch them.
-        - Values marked [REQUIRED_FROM_SOURCE] must have a new task created.
-        
+        FOLLOW-UP MODE
+
+        VERIFIED FACTS
+
+        {already_verified_facts}
+
+        Purified Query
+
+        {current_query}
+
+        Rules
+
+        1. Any metric written as
+
+        METRIC(VALUE)
+
+        is already verified.
+
+        Never generate retrieval tasks for those metrics.
+
+        2. Generate retrieval tasks ONLY for
+
+        REQUIRED_FROM_SOURCE(...)
+
+        metrics.
+
+        3. If the purified query contains no
+
+        REQUIRED_FROM_SOURCE(...)
+
+        generate zero retrieval tasks.
+
+        4. Never duplicate retrieval tasks for evidence already present in audit_wiki.
         """
     else:
         planner_instruction=f"Analyze the user query,classify a financial query type and  build a comprehensive step by step task plan."
@@ -133,7 +229,17 @@ def planner_node(state:AgentState):
         )
    
     # Invoke the LLM directly with the string
-    raw_result = structured_planner.invoke(planner_prompt,config={"callbacks": [perf_cb]})
+    try:
+        raw_result = structured_planner.invoke(planner_prompt,config={"callbacks": [perf_cb]})
+    except Exception:
+        logger.exception(
+            f"Planner LLM invocation failed | prompt_version={prompt_version}"
+        )
+        return {
+            "planner_failed": True
+        }
+
+
     # 5. Extracting data from the 'include_raw' format
     plan_output = raw_result["parsed"] # This is your 'Planner' object
    
@@ -143,14 +249,25 @@ def planner_node(state:AgentState):
    
     print(f"Plan Created: {plan_output.tasks}")
 
+    if not plan_output.tasks: 
+        logger.error(
+        f"Planner returned empty task list | prompt_version={prompt_version}"
+        )
+        return {
+            "planner_failed": True
+        }
+
     #JOIN ALL TASKS 
     task_rationales="|".join([t.rationale for t in plan_output.tasks])
     all_extracted_year=list(set([t.extracted_year for t in plan_output.tasks]))
     all_extracted_company=list(set([t.extracted_company for t in plan_output.tasks]))
     node_results = metrics_getter(state)
     node_results["prompt_version"] = prompt_version
-
-    log_to_mlflow("planner",node_results,step=current_turn)
+    
+    try:
+        log_to_mlflow("planner",node_results,step=current_turn)
+    except Exception as e:
+        logger.warning(f"MLflow node logging failed: {e}")
  
     print(plan_output)
 

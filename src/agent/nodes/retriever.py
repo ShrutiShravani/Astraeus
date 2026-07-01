@@ -10,7 +10,7 @@ import time
 from src.utils.monitoring import log_to_mlflow
 from deepeval.metrics import ContextualPrecisionMetric, ContextualRelevancyMetric
 from deepeval.test_case import LLMTestCase
-from src.utils.get_metrics import log_heavy_metrics
+from custom_logging import logger
 
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 ranker = Ranker(model_name="rank-T5-flan", cache_dir="~/.cache")
@@ -167,45 +167,51 @@ def hybrid_retriever_node(state: AgentState):
             query=models.FusionQuery(fusion=models.Fusion.RRF),
             query_filter=models.Filter(must=filter_conditions)
         )
+        
+        try:
+            for point in search_result.points: 
+                if point.id not in seen_ids:
+                    payload =point.payload
+                    if "metadata" in payload:
+                        print(f"metadata keys{payload['metadata'].keys()}")
+                    text_content= payload.get("page_content","")
+                    p_company = payload.get("company") or payload.get("metadata", {}).get("company") or "N/A"  # Not "metadata.company", just "company"
+                    p_year = payload.get("year") or  payload.get("metadata", {}).get("year") or "N/A"
+                    p_source = payload.get("source") or payload.get("metadata", {}).get("source") or "N/A"    # This is your filename (e.g., NIKE_10K_2020.pdf)
+                    p_doc_type = payload.get("doc_type") or payload.get("metadata", {}).get("doc_type") or "N/A"
+                    p_page = payload.get("page") or payload.get("metadata", {}).get("page") or "N/A"
+                    
+                    #we inject the metadata into the text for the llm to see it later
 
-        for point in search_result.points: 
-            if point.id not in seen_ids:
-                payload =point.payload
-                if "metadata" in payload:
-                    print(f"metadata keys{payload['metadata'].keys()}")
-                text_content= payload.get("page_content","")
-                p_company = payload.get("company") or payload.get("metadata", {}).get("company") or "N/A"  # Not "metadata.company", just "company"
-                p_year = payload.get("year") or  payload.get("metadata", {}).get("year") or "N/A"
-                p_source = payload.get("source") or payload.get("metadata", {}).get("source") or "N/A"    # This is your filename (e.g., NIKE_10K_2020.pdf)
-                p_doc_type = payload.get("doc_type") or payload.get("metadata", {}).get("doc_type") or "N/A"
-                p_page = payload.get("page") or payload.get("metadata", {}).get("page") or "N/A"
+                    enriched_text =(
+                    f"--- [COORD START] ---\n"
+                    f"COMPANY_NAME: {p_company}\n"
+                    f"YEAR: {p_year}\n"
+                    f"SOURCE_ID: {p_source}\n" # This is the full filename
+                    f"DOC_TYPE: {p_doc_type}\n"
+                    f"PAGE: {p_page}\n"
+                    f"CONTENT: {text_content}\n"
+                    f"--- [COORD END] ---\n"
+                )
+                        
+                    
+                    all_contexts.append({
+                        "id": point.id,
+                        "source": p_source,
+                        "company": p_company, # Explicitly pass these for pre_filtering
+                        "year": p_year,#
+                        "doc_type":p_doc_type,
+                        "page":p_page,
+                        "text": enriched_text,
+        
+                    })
                 
-                #we inject the metadata into the text for the llm to see it later
-
-                enriched_text =(
-                f"--- [COORD START] ---\n"
-                f"COMPANY_NAME: {p_company}\n"
-                f"YEAR: {p_year}\n"
-                f"SOURCE_ID: {p_source}\n" # This is the full filename
-                f"DOC_TYPE: {p_doc_type}\n"
-                f"PAGE: {p_page}\n"
-                f"CONTENT: {text_content}\n"
-                f"--- [COORD END] ---\n"
-               )
-                      
-                
-                all_contexts.append({
-                    "id": point.id,
-                    "source": p_source,
-                    "company": p_company, # Explicitly pass these for pre_filtering
-                    "year": p_year,#
-                    "doc_type":p_doc_type,
-                    "page":p_page,
-                    "text": enriched_text,
-      
-                })
-               
-                seen_ids.add(point.id)
+                    seen_ids.add(point.id)
+        except Exception as e:
+            logger.exception(e)
+            return {
+            "retriever_failed": True
+        }
     
     # --- 4. RERANKING ---
     rerank_query = query
@@ -215,11 +221,16 @@ def hybrid_retriever_node(state: AgentState):
         print("WARNING: No contexts found in Qdrant. Skipping rerank.")
         top_chunks = []
         
-            
-    rerank_request = RerankRequest(query=rerank_query, passages=all_contexts)
-    # Return top 8 to ensure we catch enough rows from large tables
-    #limit=12 if len(search_tasks)>1 else 8
-    top_chunks = ranker.rerank(rerank_request)[:10]
+    try:
+        rerank_request = RerankRequest(query=rerank_query, passages=all_contexts)
+        # Return top 8 to ensure we catch enough rows from large tables
+        #limit=12 if len(search_tasks)>1 else 8
+        top_chunks = ranker.rerank(rerank_request)[:10]
+    except Exception as e:
+            logger.exception(e)
+            return {
+            "retriever_failed": True
+        }
     
 
 
@@ -240,16 +251,6 @@ def hybrid_retriever_node(state: AgentState):
     
     final_contexts = pre_filtering(initial_contexts, plan)
 
-
-    """
-    retrieval_scores= log_heavy_metrics(
-        query=state['query'],
-        context=[c['evidence'] for c in final_contexts],
-        prompt_version="2.1.0",
-        current_turn=current_turn
-    )
-    """
-    
  
 
     node_latency = time.time() - start_ts
@@ -269,7 +270,11 @@ def hybrid_retriever_node(state: AgentState):
     }
 
     node_metrics["prompt_version"] ="None"
-    log_to_mlflow("retriever",node_metrics,step=current_turn)
+
+    try:
+        log_to_mlflow("retriever",node_metrics,step=current_turn)
+    except Exception as e:
+        logger.warning(f"MLflow node logging failed: {e}")
 
     # 2. Save the results to Redis for next time
     #cache_client.setex(cache_key,86400,json.dumps(final_contexts))

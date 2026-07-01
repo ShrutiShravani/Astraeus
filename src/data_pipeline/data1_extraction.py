@@ -98,41 +98,103 @@ def validate_text_output(text, tables):
         "has_tables": has_tables,
         "is_empty": is_empty
     }
-"""
-def evaluate_fidelity(markdown_text, engine_choice, f_page, tables):
-    text = markdown_text.strip()
-    if not text:
+
+
+def convert_markdown_to_plain(md: str) -> str:
+    """
+    Converts markdown into plain text for comparison with raw PDF text.
+    Keeps table contents while removing markdown syntax.
+    """
+
+    # Remove markdown headings
+    md = re.sub(r'^#{1,6}\s+', '', md, flags=re.MULTILINE)
+
+    # Convert table separators into spaces
+    md = md.replace("|", " ")
+
+    # Remove markdown divider rows
+    md = re.sub(r'^\s*:?-{3,}:?\s*$', '', md, flags=re.MULTILINE)
+
+    # Remove emphasis
+    md = md.replace("*", "")
+    md = md.replace("_", "")
+
+    # Collapse whitespace
+    md = re.sub(r'\s+', ' ', md)
+
+    return md.strip()
+
+
+def evaluate_fidelity(
+    markdown_text: str,
+    raw_text: str,
+    expected_tables: bool
+):
+    """
+    Runtime extraction validation.
+
+    Returns:
+        (True, None)
+
+        or
+
+        (False, reason)
+    """
+
+    # ---------------------------------------------------
+    # Empty output
+    # ---------------------------------------------------
+
+    if not markdown_text.strip():
         return False, "empty_output"
-        
-    # Keep the word count logic, but be less aggressive
-    clean_text = re.sub(r'[|\-+:*#_=\[\]()]', ' ', text)
-    extracted_word_count = len(clean_text.split())
-    
-    # RELAXED SYMBOL RATIO: Markdown naturally has symbols. 
-    # Use 0.85 instead of 0.65 to allow for standard Markdown formatting.
-    special_chars = sum(1 for c in text if not c.isalnum() and not c.isspace())
-    total_len = len(text)
-    if total_len > 0 and (special_chars / total_len) > 0.85:
-        return False, "high_symbol_ratio"
 
-    # DENSITY BYPASS: If tables are present, trust the engine.
-    if bool(tables):
-        return True, None
+    # ---------------------------------------------------
+    # Convert markdown into plain text
+    # ---------------------------------------------------
 
-    # DENSITY CHECK: Use a 3.0 threshold (300% variance) instead of 0.60 (60%).
-    # This allows for the "Markdown Overhead" (headers, lists, etc.)
-    raw_text = f_page.get_text("text") or ""
-    raw_input_word_count = max(len(raw_text.split()), 1) # Prevent division by zero
-    
-    diff = abs(raw_input_word_count - extracted_word_count) / raw_input_word_count
-    
-    if diff > 3.0: 
-        # Only fail if the extraction is wildly different from the raw text
-        return False, f"extraction_density_mismatch: {diff:.2f}"
-    
+    plain_text = convert_markdown_to_plain(markdown_text)
+
+    extracted_words = len(plain_text.split())
+
+    if extracted_words < 10:
+        return False, "too_few_words"
+
+    # ---------------------------------------------------
+    # Retention ratio
+    # ---------------------------------------------------
+
+    raw_words = max(len(raw_text.split()), 1)
+
+    retention = extracted_words / raw_words
+
+    if retention < 0.90:
+        return False, f"low_retention_{retention:.2f}"
+
+    # ---------------------------------------------------
+    # Symbol ratio
+    # ---------------------------------------------------
+
+    special = sum(
+        1
+        for c in markdown_text
+        if not c.isalnum() and not c.isspace()
+    )
+
+    ratio = special / max(len(markdown_text), 1)
+
+    if ratio > 0.60:
+        return False, "mostly_symbols"
+
+    # ---------------------------------------------------
+    # Table sanity
+    # ---------------------------------------------------
+
+    if expected_tables:
+
+        if "|" not in markdown_text:
+            return False, "table_missing"
+
     return True, None
-"""
-
 
 def routing_classifier(has_table, has_text):
     # BUG FIX: Re-ordered conditional logic cleanly so complex states prioritize correctly
@@ -181,13 +243,17 @@ def process_page_in_process(task, attempt):
         result["content"] = content
         
         # Fidelity evaluations
-        #is_valid, reason = evaluate_fidelity(content, result["engine"], f_page, tables)
-        """
+        is_valid, reason = evaluate_fidelity(
+                        markdown_text=content,
+                        raw_text=text,
+                        expected_tables=validation["has_tables"]
+                    )
+                            
         if not is_valid:
-            send_to_dlq(page_num, reason=f"Fidelity Check Failed: {reason}", document_id=document_id)
+            send_to_dlq(document_id=document_id,stage="data_extraction",page_num=page_num, reason="Extraction Exception", engine=result["engine"],error=e)
             result["error"] = f"fidelity_failure: {reason}"
             return result
-        """
+    
         # Success checkpoint
         result["status"] = "SUCCESS"
         result["latency"] = time.time() - start_time
@@ -195,7 +261,7 @@ def process_page_in_process(task, attempt):
 
     except Exception as e:
         result["error"] = str(e)
-        send_to_dlq(page_num, reason="Extraction Exception", engine=result["engine"], document_id=document_id, error=e)
+        send_to_dlq(document_id=document_id,stage="data_extraction",page_num=page_num, reason="Extraction Exception", engine=result["engine"],error="Extraction_Failure")
         return result
     finally:
         if doc is not None:

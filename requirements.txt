@@ -50,3 +50,5 @@ deepeval
 promtheus-client
 slowapi
 pymupdf
+openai 
+pyresilience
