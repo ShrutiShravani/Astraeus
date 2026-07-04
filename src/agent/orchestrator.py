@@ -5,6 +5,7 @@ from src.agent.nodes.auditor import auditor_node
 from src.agent.nodes.semantic_cache_nodes import semantic_cache_check_node,finalize_audit
 from src.agent.nodes.retriever import hybrid_retriever_node
 from src.agent.nodes.python_repl import python_repl_node
+from src.agent.nodes.purifier_node import prompt_purifier_node
 from src.agent.nodes.audit_engine import audit_engine
 from src.agent.nodes.system_guradrail import system_1_guard # The actual function
 from src.agent.nodes.planner import planner_node
@@ -31,7 +32,7 @@ def route_after_extractor(state:AgentState):
 
 def route_after_generator(state:AgentState):
     if state.get("generator_failed"):
-        return "end"
+        return "human_review"
     
     return "user_auditor"
 
@@ -47,7 +48,13 @@ def route_after_planner(state: AgentState):
 
     return "retriever"
 
-
+def route_after_prompt_purifier(state):
+    if state.get("prompt_purifier_failed"):
+        return "end"
+    if state.get("ask_user"):
+        return "prompt_purifier"  # This halts the graph and returns control to main.py
+    
+    return "planner"
 
 def route_after_retriever_auditor(state: AgentState):
     # This is where the decision happens!
@@ -58,9 +65,9 @@ def route_after_retriever_auditor(state: AgentState):
 
     if state.get("retriever_auditor_failed"):
         return "end"
-
+  
     elif needs_revision:
-        if attempts>2:
+        if attempts>3 and feedback.no_evidence_found:
             return "human_review"
         print(f"--- RETRIEVER REJECTED (Attempt {attempts}): LOOPING TO PLANNER ---")
         return "planner"
@@ -79,8 +86,8 @@ def route_cache(state):
     if val is True:
         return "hit"
     else:
-        print("continue to planner")
-        return "continue"
+        print("continue to prompt purifier")
+        return "prompt_purifier"
 
 def route_after_python_repl(state):
     if state.get("type")=="C":
@@ -118,6 +125,7 @@ workflow=StateGraph(AgentState)
 
 workflow.add_node("cache_check", semantic_cache_check_node)
 workflow.add_node("guard",system_1_guard)
+workflow.add_node("prompt_purifier",prompt_purifier_node)
 workflow.add_node("planner",planner_node)
 workflow.add_node("retriever_auditor",retrieval_auditor_node)
 workflow.add_node("extractor",math_extractor_node)
@@ -146,7 +154,7 @@ workflow.add_conditional_edges(
     route_cache,
     {
         "hit": "human_review",
-        "continue": "planner"
+        "prompt_purifier": "prompt_purifier"
     }
 )
 workflow.add_conditional_edges(
@@ -174,6 +182,16 @@ workflow.add_conditional_edges(
     {    
         "generator": "generator",
         "human_review": "human_review",
+        "end":END
+    }
+)
+
+workflow.add_conditional_edges(
+    "prompt_purifier",
+    route_after_prompt_purifier,
+    {    
+        "prompt_purifier": "prompt_purifier",
+        "planner":"planner",
         "end":END
     }
 )
@@ -246,6 +264,7 @@ workflow.add_conditional_edges(
     route_after_retriever_auditor,
     {
         "generator": "generator",
+        "human_review": "human_review",
         "extractor": "extractor",
         "planner":"planner",
         "end": END

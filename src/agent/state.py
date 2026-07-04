@@ -36,7 +36,9 @@ class Retriever_feedback(BaseModel):
     needs_revision:bool= Field(description="STRICT: Set to False if all raw numbers (e.g. COGS, Inventory) are present. Set to True ONLY if a document or year is missing.")
     retriever_critique:str= Field(description="Detailed explanation of hallucinations or missing info")
     found_evidence: List[EvidenceFound] = Field(description="List of all verified data points found in context")
-
+    no_evidence_found:bool= Field(description="True if no evidence was found for the task")
+    no_evidence_found_reason:str= Field(description="Reason for no evidence found")
+    
 class Reflection(BaseModel):
     decision:str=Field(description="Accept or reject the report")
     critique:str= Field(description="Detailed explanation of hallucinations or missing info")
@@ -150,6 +152,11 @@ class DivergenceAnalyst(BaseModel):
 class FinalGeneration(BaseModel):
     report: str = Field(description="The full markdown audit report")
 
+
+class PurifierOutput(BaseModel):
+    action: Literal["rewrite", "clarify"]
+    rewritten_query: str = Field(description="The disambiguated, self-contained user query.")
+    clarification_question: Optional[str] = Field(default=None, description="The question to ask if action is 'clarify'.")
     
 class FinancialMetric(BaseModel):
     label: str = Field(description="The name of the metric (e.g., Net_Income, Total_Assets).")
@@ -210,9 +217,10 @@ class AgentState(TypedDict):
     memory_usage: float # Captured at the end of the graph
     end_time_node:float
     clarification_question:str
-    ask_user:bool
     planner_failed: bool = False 
     retriever_failed: bool = False 
     retrieval_auditor_failed: bool = False 
     generator_failed: bool = False
     divergence_analyst_failed:bool=False
+    prompt_purifier_failed:bool=False
+    ask_user:bool=False

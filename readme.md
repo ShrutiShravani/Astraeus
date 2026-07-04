@@ -352,3 +352,11 @@ To scale **AESTRAUS** to 500+ documents while maintaining **99%+ precision** ove
      acceleration' narrative. Does the 10-K attribute the 130 basis point margin contraction to higher digital fulfillment costs, and did management mention this 'profitability trade-off' in the transcript?
 
      FOLLOW UP QUERY:Compare the Nike's 2020 claim that digital is 'financially accretive' with the 2021 10-K 'Selling and Administrative Expense' section. Identify if the increase in demand creation and operating overhead suggests that while digital is 'accretive' on a gross level, it is actually dilutive to operating income due to higher marketing and tech spend
+
+
+* Compare Nike's management's comments on supply chain disruptions during the 2021 earnings call with the risks disclosed in the 2021 Form 10-K. Highlight any unsupported claims."
+FOLLOW UP QUERY :Did management claim the supply chain issues had improved, and do the financial statements support that claim?
+* Compare Nike's 2021 gross margin discussion with Nike's 2020 gross margin discussion using the corresponding earnings calls and 10-K filings.
+follow up query: Did gross margin icnrease form 2020 to 2021
+
+* Compare management's statements regarding profitability improvements with the financial disclosures in the 2021 Form 10-K

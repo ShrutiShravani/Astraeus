@@ -30,7 +30,7 @@ llm_mini = ChatOpenAI(model="gpt-4.1-mini",streaming=True,
 # Try GPT-4o -> Try Snapshot -> Try Mini (Fail-safe)
 resilient_pro = llm_pro.with_fallbacks([llm_pro_snap, llm_mini])
 
-async def query_aware_compression(context,query,planner_tasks):
+async def query_aware_compression(context,query):
     """
     Compresses context to only the parts relevant to the query and tasks.
     """
@@ -61,12 +61,10 @@ async def retrieval_auditor_node(state:AgentState):
     current_query = state["query"]
     current_turn = state.get("turn_count", 0) + 1
     structured_llm =  resilient_pro.with_structured_output(Retriever_feedback,include_raw=True)
-    existing_audit_wiki=state.get("audit_wiki",[])
     context= state.get("context")
     evidence_found=[]
     combined_critique=[]
-    existing_final_context = state.get("final_context", []) 
-    
+
 
     plan = state.get("plan", [])
     
@@ -123,15 +121,6 @@ async def retrieval_auditor_node(state:AgentState):
         if item.status!="missing":
             print(f"Verified:{item.task_name} | {item.company} | {item.year} | {item.evidence} in {item.source} p.{item.page} {item.quote}")
             evidence_found.append(item)
-          
-    all_evidence = existing_audit_wiki + evidence_found
-  
-    verified_pages={str(item.page) for item in evidence_found}
-
-    #old_verified_pages= {str(item.page) for item in audit_wiki}
-    new_pruned = [chunk for chunk in context if str(chunk.get("page")) in verified_pages]
-    
-    all_contexts = existing_final_context + new_pruned
     
      
     # 4. CAPTURE METRICS (The Senior-Level Step)
@@ -153,9 +142,6 @@ async def retrieval_auditor_node(state:AgentState):
     print(f"need_revision{needs_revision}")
     print(output.retriever_critique)
 
-    all_evidence = existing_audit_wiki + evidence_found
-
-
 
     if needs_revision is True:
         combined_critique.append(output.retriever_critique)
@@ -167,10 +153,9 @@ async def retrieval_auditor_node(state:AgentState):
   
     return{
         "turn_count": current_turn,
-        "audit_wiki":all_evidence,
+        "audit_wiki":evidence_found,
         **node_results,
         "context": context,
-        "final_context": all_contexts,
         "retriever_feedback": output,
         "retriever_audit_attempts": current_attempts,
         "critique":  combined_critique,

@@ -1,3 +1,4 @@
+import pandas
 from src.agent.state import AgentState,FinalGeneration
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -11,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 import re
 from custom_logging import logger
+from openai import RateLimitError
 
 
 promptloader= PromptManager()
@@ -59,15 +61,21 @@ def unified_generator_node(state: AgentState):
     divergence_type =state.get("divergence_type")
     divergence_reason =state.get("divergence_reason")
     conflict_rationale = state.get("conflict_rationale")
+    max_retries=0
+    attempts=2
+
+    print(f"[DEBUG] Wiki Size: {len(audit_wiki)} items")
+    print(f"[DEBUG] Raw Context Size: {len(str(raw_context))} chars")
+
+
+    # -----------------------
     
     consolidated_block = ""
     if audit_wiki and is_follow_up:
         wiki_str = "\n".join([f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence}: {item.quote})" for item in audit_wiki])
         consolidated_block += f"### [1] VERIFIED FINANCIAL DATA (Wiki):\n{wiki_str}\n"
-    
-    if is_follow_up and saved_context:
-        consolidated_block += f"\n### [2] PREVIOUS NARRATIVE EVIDENCE:\n{saved_context[-1]}\n"
-    
+
+
 
     planner_tasks = state.get("plan")
     active_task_list = [f"[NEW RESEARCH]: {t.title}" for t in planner_tasks]
@@ -97,15 +105,10 @@ def unified_generator_node(state: AgentState):
     
     # 1. Coordinate-Based Context Construction
     
-    evidence = extract_from_verified_evidence(raw_context)
+    evidence = wiki_str
     print(f"evdience:{evidence}")
  
-    if is_follow_up:
-        # In a follow-up, we show the hierarchy: Wiki [1], History [2], New [3]
-        final_context_for_llm = f"{consolidated_block}\n### [3] NEW INVESTIGATION FINDINGS:\n{evidence}"
-    else:
-        # In Turn 1, there is no [1] or [2], so we just give it [3]
-        final_context_for_llm = f"### [3] NEW INVESTIGATION FINDINGS:\n{evidence}"
+ 
 
     follow_up_instruction=" "
     if is_follow_up:
@@ -180,7 +183,7 @@ def unified_generator_node(state: AgentState):
             # RULE: REWRITE (Fix the mistake in the existing report)
             merge_instruction = f"""
             ### THE REVISION PROTOCOL (CORRECTION MODE):
-            The Auditor rejected your previous draft. 
+            The Auditor rejected your previous draft {previous_draft}. 
             FIX the errors mentioned in the REVISION REQUIRED section.
             DO NOT APPEND. REWRITE the report so it is clean and accurate.
             """
@@ -194,10 +197,9 @@ def unified_generator_node(state: AgentState):
         revision_instruction=revision_instruction,
         follow_up_instruction=follow_up_instruction,
         mode_instruction=mode_instruction,
-        previous_draft=previous_draft,  # Logic handled!
         query_type= query_type,
         math_result=math_result,
-        final_context_str=final_context_for_llm,
+        final_context_str=consolidated_block,
         alignment_status = alignment_status,
         narrative_conflict_score =narrative_conlfict_score,
         divergence_type= divergence_type,
@@ -210,6 +212,15 @@ def unified_generator_node(state: AgentState):
     system_prompt_format= system_prompt +"\n\n" + parser.get_format_instructions()
     
     user_content = f"QUERY: {state['query']}\n\nCONTEXT:\n{raw_context}"
+
+    if len(system_prompt_format)+len(user_content)>25000:
+        logger.warning("Context window bloat: Truncating evidence to prevent 429 error.")
+        # Logic: Either truncate or return a failure to trigger an Audit Summary node
+        return {
+            "generator_failed": True,
+            "error": "Context length exceeded. Please run a 'Summarize Evidence' task."
+        }
+
     
     generator_chain= (ChatPromptTemplate.from_messages([("system", "{system_prompt_format}"), # Match this...
         ("human", "{user_content}")
@@ -225,11 +236,20 @@ def unified_generator_node(state: AgentState):
         for chunk in generator_chain.stream(
             input_map,
             config={"callbacks": [perf_cb]}
-        ):
+        ):  
+
+        
             if full_response is None:
                 full_response=chunk
             else:
                 full_response+=chunk
+
+    except RateLimitError:
+        logger.error("TPM Limit Exceeded: Context window too large.")
+        return {
+            "generator_failed": True, 
+            "error": "The audit is getting too complex. Please request a summary of the findings so far."
+        }
 
       
     except Exception as e:
@@ -249,24 +269,29 @@ def unified_generator_node(state: AgentState):
             "generator_failed": True
         }
 
-    #clean tetx
-    cleaned_text= raw_text.replace("```json", "").replace("```", "").strip()
-
-    plan_output= parser.parse(cleaned_text)
     
-    try:
+    while attempts<max_retries and plan_output is None:
+        try:
+            cleaned_text= raw_text.replace("```json", "").replace("```", "").strip()
+
+            plan_output= parser.parse(cleaned_text)
+
+            if not plan_output:
+                raise ValueError("JSON schema missing 'report' key.")
+                
+        except Exception as e:
+            attempts+=1
+            if attempts<=max_retries:
+                    logger.error(f"Parser/Schema failure: {e}")
+                    return {"generator_failed": True, "error": "LLM failed to return expected schema."}
+    
+   
     #get raw results for metrics calculation
-        raw_res_metrics= {
+    raw_res_metrics= {
             "raw":full_response,
             "parsed":plan_output
         }
-    except Exception as e:
-        logger.exception(
-            f"Generator JSON parsing failed | prompt_version={prompt_version}"
-        )
-        return {
-            "generator_failed": True
-        }
+
         
     metrics_getter= get_node_metrics("unified_generator",raw_res_metrics,perf_cb,start_ts)
     
@@ -281,9 +306,6 @@ def unified_generator_node(state: AgentState):
     print(f"final_report:{final_report}")
     
 
-    def clean_coords(val):
-        if val is None: return ""
-        return str(val).replace("-", "").replace(" ", "")
 
     final_context=[]
 
@@ -320,7 +342,7 @@ def unified_generator_node(state: AgentState):
     final_report_with_evidence = f"{final_report}\n{raw_context}"
     print("final_report appended with evidence")
     score= state.get("narrative_conflict_score")
-    if score>1:
+    if type == "C" and score>1:
         print("Alert!!! divergence detected")
     else:
         print("No divergence detected")

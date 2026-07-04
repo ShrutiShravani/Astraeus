@@ -168,50 +168,75 @@ async def start_audit(data: AuditInput,request:Request):
             #monitoring.GLOBAL_RUN_ID = run_id
             monitoring.set_active_run(run_id)
             #monitoring.ACTIVE_AUDIT_RUN_ID = run_id # Match your node's variable name
+            try:
+                if current_state.values.get("ask_user"):
+                    return {
+                        "thread_id": thread_id,
+                        "status": "CLARIFICATION_REQUIRED",
+                        "question": current_state.values.get("clarification_question"),
+                        "report": None
+                    }
 
+            # FIX 1: You MUST 'await' the invoke so it finishes the first run 
+            # and hits the 'human_review' breakpoint before you call get_state.
+                await engine.ainvoke(
+                    {
+                        "query": data.query,
+                        "query_history": [data.query],
+                        "human_decision": None,
+                        "audit_status": "AWAITING_REVIEW"
+                    },
+                    config
+                )
 
-        # FIX 1: You MUST 'await' the invoke so it finishes the first run 
-        # and hits the 'human_review' breakpoint before you call get_state.
-            await engine.ainvoke(
-                {
-                    "query": data.query,
-                    "query_history": [data.query],
-                    "human_decision": None,
-                    "audit_status": "AWAITING_REVIEW"
-                },
-                config
-            )
+                current_state = await engine.aget_state(config)
 
-        AUDIT_LATENCY.observe(time.time() - start_time)
+                # 3. NOW check if the Purifier asked for clarification
+                if current_state.values.get("ask_user"):
+                    return {
+                        "thread_id": thread_id,
+                        "status": "CLARIFICATION_REQUIRED",
+                        "question": current_state.values.get("clarification_question"),
+                        "report": None
+                    }
 
-        # FIX 2: Use aget_state (async version) to ensure data is pulled from Postgres
-        current_state =  await engine.aget_state(config)
-        total_latency = time.time() - start_time
-        mlflow.log_metric("end_to_end_latency", total_latency)
-        mlflow.log_metric("total_tokens", cb.total_tokens)
-        mlflow.log_metric("prompt_tokens", cb.prompt_tokens)
-        mlflow.log_metric("completion_tokens", cb.completion_tokens)
-        mlflow.log_metric("total_cost_usd", cb.total_cost)
-
-        micro_benchmarks = current_state.values.get("node_benchmarks", {})
-        system_latency = sum(m['latency'] for m in micro_benchmarks.values())
-        mlflow.log_metric("system_latency",system_latency)
-
-
-        if not current_state or not current_state.values:
-            raise HTTPException(status_code=500, detail="Audit started but state is empty.")
+                return {
+                "thread_id": thread_id,
+                "report": current_state.values.get("generation"),
+                "status": "AWAITING_REVIEW"
+                }
         
-        ACTIVE_AUDITS.dec()
+            finally:
+                AUDIT_LATENCY.observe(time.time() - start_time)
 
-        return {
-            "thread_id": thread_id,
-            "report": current_state.values.get("generation"),
-            "status": current_state.values.get("audit_status", "AWAITING_REVIEW"),
-            "menu_options": {
-                "1": "pass",
-                "2": "Correct Manually"
-            }
-        }
+                # FIX 2: Use aget_state (async version) to ensure data is pulled from Postgres
+                current_state =  await engine.aget_state(config)
+                total_latency = time.time() - start_time
+                mlflow.log_metric("end_to_end_latency", total_latency)
+                mlflow.log_metric("total_tokens", cb.total_tokens)
+                mlflow.log_metric("prompt_tokens", cb.prompt_tokens)
+                mlflow.log_metric("completion_tokens", cb.completion_tokens)
+                mlflow.log_metric("total_cost_usd", cb.total_cost)
+
+                micro_benchmarks = current_state.values.get("node_benchmarks", {})
+                system_latency = sum(m['latency'] for m in micro_benchmarks.values())
+                mlflow.log_metric("system_latency",system_latency)
+
+
+                if not current_state or not current_state.values:
+                    raise HTTPException(status_code=500, detail="Audit started but state is empty.")
+                
+                ACTIVE_AUDITS.dec()
+
+                return {
+                    "thread_id": thread_id,
+                    "report": current_state.values.get("generation"),
+                    "status": current_state.values.get("audit_status", "AWAITING_REVIEW"),
+                    "menu_options": {
+                        "1": "pass",
+                        "2": "Correct Manually"
+                    }
+                }
     
 
 @app.post("/audit/review")

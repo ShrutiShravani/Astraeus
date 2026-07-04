@@ -3,7 +3,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from typing import List
 import time
-from src.agent.state import AgentState, Planner
+from src.agent.state import AgentState, Planner, PurifierOutput
 from dotenv import load_dotenv
 import os
 from src.utils.monitoring import PerformanceCallback
@@ -98,79 +98,6 @@ def planner_node(state:AgentState):
     """
         
     elif is_follow_up:
-        # --- FOLLOW-UP/INVESTIGATE STATE (The Fix for your Hallucinations) ---
-        purifier_prompt = f"""
-        You are a Follow-up Query Resolver.
-
-        Your job is NOT to answer the question.
-
-        Your only job is to rewrite the user's query so that the Planner can decide what must be retrieved.
-
-        Inputs
-
-        Current User Query:
-        {current_query}
-
-        Conversation History:
-        {history}
-
-        Verified Facts:
-        {already_verified_facts}
-
-        Rules
-
-        1. Resolve all pronouns using Conversation History first.
-
-        2. Use Verified Facts only to determine whether information already exists.
-
-        3. If information already exists, rewrite it as
-
-        METRIC(VALUE)
-
-        Example
-
-        Revenue($394.3B)
-
-        4. If information is missing, rewrite it as
-
-        REQUIRED_FROM_SOURCE(metric)
-
-        Example
-
-        Compare Revenue($394.3B)
-        with REQUIRED_FROM_SOURCE(Gross Margin)
-
-        5. If multiple metrics match the user's reference,
-
-        return exactly
-
-        NEEDS_CLARIFICATION
-
-        followed by ONE clarification question.
-
-        Return ONLY the rewritten query.
-        """
-
-        current_query = llm_mini.invoke(purifier_prompt).content.strip()
-
-        # ------------------------------------------
-        # Clarification required
-        # ------------------------------------------
-
-        if current_query.startswith("NEEDS_CLARIFICATION"):
-
-            return {
-                "ask_user": True,
-                "clarification_question": current_query.replace(
-                    "NEEDS_CLARIFICATION",
-                    ""
-                ).strip(),
-                "steps": ["Planner requested clarification"]
-            }
-
-        # ------------------------------------------
-        # Continue planning
-        # ------------------------------------------
 
         planner_instruction = f"""
         FOLLOW-UP MODE
@@ -179,7 +106,7 @@ def planner_node(state:AgentState):
 
         {already_verified_facts}
 
-        Purified Query
+        Purified User Query
 
         {current_query}
 
