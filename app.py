@@ -10,8 +10,8 @@ import os,uuid,time,mlflow,shutil
 from src.agent.orchestrator import workflow
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pathlib import Path
-from src.data_pipeline.data1_extraction import extract_senior_final_v3
-from src.data_pipeline.pii_masking import SecureShield
+from src.data_pipeline.data1_extraction import pipeline_runner_high_throughput
+from src.data_pipeline.pii_masking import batch_masking_pipeline_runner
 from src.data_pipeline.chunker import process_and_upload
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
@@ -24,6 +24,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from src.utils import monitoring
 from langchain_community.callbacks import get_openai_callback
+import uvicorn
 
 # 1. Define the Limiter (identifies users by IP address)
 limiter = Limiter(key_func=get_remote_address)
@@ -69,7 +70,7 @@ async def lifespan(app:FastAPI):
             # 4. CRITICAL: yield MUST be inside the 'with' block 
             # so the DB connection stays open while the app is running.
             yield 
-            
+        print("--- SERVER SHUTDOWN ---")
     except Exception as e:
         print(f"--- STARTUP CRITICAL ERROR: {e} ---")
         app.state.audit_engine=None
@@ -87,7 +88,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 BASE_DIR= Path(os.getenv("DATA_DIR"))
 INPUT_DIR = BASE_DIR/"raw"
-shield = SecureShield()
+
 
 
 class AuditInput(BaseModel):
@@ -111,8 +112,8 @@ async def upload_save_file(file: UploadFile, input_directory: Path, category: st
 async def run_full_pipeline(file_path_str: str):
     file_path = Path(file_path_str) # Convert back to Path for logic
     try:
-        processed_files = await extract_senior_final_v3([file_path])
-        mask_result = shield.mask_single_file(processed_files[0])
+        processed_files = await pipeline_runner_high_throughput([file_path])
+        mask_result = batch_masking_pipeline_runner(processed_files[0])
         masked_md_path = mask_result["output_path"]
         process_and_upload([masked_md_path])
         print(f"Job complete for {file_path.name}")
@@ -159,7 +160,6 @@ async def start_audit(data: AuditInput,request:Request):
             }
         }
 
-
     
     with mlflow.start_run(run_name=f"API_audit_{thread_id}") as run:
         with get_openai_callback() as cb:
@@ -169,13 +169,6 @@ async def start_audit(data: AuditInput,request:Request):
             monitoring.set_active_run(run_id)
             #monitoring.ACTIVE_AUDIT_RUN_ID = run_id # Match your node's variable name
             try:
-                if current_state.values.get("ask_user"):
-                    return {
-                        "thread_id": thread_id,
-                        "status": "CLARIFICATION_REQUIRED",
-                        "question": current_state.values.get("clarification_question"),
-                        "report": None
-                    }
 
             # FIX 1: You MUST 'await' the invoke so it finishes the first run 
             # and hits the 'human_review' breakpoint before you call get_state.
@@ -313,6 +306,14 @@ async def review_audit(data: ReviewInput,request:Request):
             # Logic to close the audit and log to JSONL
             return {"status": "Audit Closed", "report": state.values.get("generation")}
 
+@app.get("/")
+async def root():
+    return {"message": "Astraeus Forensic Audit Engine is online"}
+
 print("monitring promtheus endpoint")
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
+
+if __name__ == "__main__":
+    # This starts the server on port 8000
+    uvicorn.run("app:app", host="0.0.0.0", port=8001, reload=True)

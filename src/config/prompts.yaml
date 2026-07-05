@@ -238,9 +238,7 @@ divergence_analyst:
 
     Classify as:
 
-    ALIGNED
-
-    because they describe different facts, not conflicting facts.
+    ALIGNED  because they describe different facts, not conflicting facts.
 
     Example:
 
@@ -309,10 +307,7 @@ divergence_analyst:
     "The reported metrics are not directly comparable because they refer to different reporting scopes."
     Never infer divergence.
 
-    Never compare statements that belong to different reporting scopes.
-
-    If no explicit contradiction exists,
-    classify as ALIGNED.
+    If no explicit contradiction exists,classify as ALIGNED.
 
 
 unified_generator:
@@ -323,14 +318,17 @@ unified_generator:
     {mode_instruction}
     {follow_up_instruction}
     {revision_instruction}
-    {merge_instruction}
+   
 
     ### [INPUT DATA]
     1. PLANNER_TASKS: {planner_tasks}
     2. QUERY_TYPE: {query_type}
     3. MATH_RESULT: {math_result}
     4. CONTEXT_HISTORY: {final_context_str}
-
+    
+    -----------------------------------------------------------
+    TYPE A and B REPORTING RULES
+    --------------------------------------------------------------
     ### [OPERATIONAL LOGIC]
     1. Generate a professional Markdown Audit Report.
     ------------------------------------------------------------
@@ -342,28 +340,12 @@ unified_generator:
     3. EVIDENCE TABLE (SHOULD INCLUDE YEAR,COMPANY,SOURCE,PAGE,EVDIENCE_TEXTS)
     4. MATH CALCULATION
   
-
-    CRITICAL: REPORT MUST INCLUDE USED_COORDINATES OR IT IS INVALID.
-
-    ------------------------------------------------------------
-    FEW-SHOT OUTPUT FORMAT
-    ------------------------------------------------------------
-
-    "report": "...markdown...",
-    "used_coordinates": ["year":2020,"source":"NIKE_2020_TRANSCRIPT_masked.md","page":8],
-    "narrative_conflict_score": 1,
-    "divergence_type": null,
-    "divergence_reason": "No material divergence detected.",
-    "conflict_rationale": "Financial Narrative Aligns with Reported Metrics."
      
     VERIFIED_EVIDENCE:
     {final_context_str}
 
     Use ONLY this evidence to create:
     - Evidence Table
-    - Used Evidence Texts
-    - Used Coordinates section
-
     The VERIFIED_EVIDENCE block is the single source of truth.
 
     Do not:
@@ -375,12 +357,23 @@ unified_generator:
     - omit provided evidence
 
     Copy metadata exactly as provided.
+    If a metric is not present in these verified sections, you must report 'DATA_NOT_FOUND'
     
     ------------------------------------------------------------
     TYPE C REPORTING RULES
     ------------------------------------------------------------
+    ### [OPERATIONAL LOGIC]
 
-    If divergence analysis results are present, they are the single source of truth.
+    1. Generate a professional Markdown Audit Report.
+    ------------------------------------------------------------
+    REPORTING SCHEMA (MANDATORY)
+    ------------------------------------------------------------
+
+    "report": "...markdown...",
+    "narrative_conflict_score": 1,
+    "divergence_type": null,
+    "divergence_reason": "No material divergence detected.",
+    "conflict_rationale": "Financial Narrative Aligns with Reported Metrics."
 
     Always use these values exactly as provided:
 
@@ -496,6 +489,9 @@ audit_engine:
       "critique": "Final summarized feedback for the generator."
     }}
 
+    CRTICIAL:
+    OUTPUT CONSTRAINT: Ensure your reason and critique fields are concise (max 3 sentences). Do not repeat the evidence in your explanation.
+
     ==================================================
     6. INPUTS
     ==================================================
@@ -506,6 +502,15 @@ audit_engine:
     execution_plan: {planner_tasks}
 
 
+compaction_node:
+   version: "v1.1.0"
+   compaction_prompt: |
+    You are a Forensic Ledger Keeper. 
+    Synthesize the following raw audit findings into a clean, markdown table.
+    
+    Raw Findings:{audit_wiki}
+    Format the table with these columns: | Year | Metric | Value | Source | Page | Forensic Fact |
+    
 
 query_purifier:
   version: "v1.1.0"

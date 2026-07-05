@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch,MagicMock
+from unittest.mock import patch,MagicMock,AsyncMock
 from src.agent.nodes.retrieval_auditor import retrieval_auditor_node
 from src.agent.state import EvidenceFound, Task,Retriever_feedback
 
@@ -44,49 +44,61 @@ def base_state():
 
 mock_planner_tasks= "Task 1 Nike's revenue for 2020 | Source: 10k" 
 
+@patch("src.agent.nodes.retrieval_auditor.query_aware_compression", new_callable=AsyncMock)
 @patch("src.agent.nodes.retrieval_auditor.resilient_pro")
 @patch("src.agent.nodes.retrieval_auditor.promptloader")
 @patch("src.agent.nodes.retrieval_auditor.llm_pro")
-@patch("src.agent.nodes.retriever.log_to_mlflow")
-
-def test_retriever_output(mock_log_to_mlflow,mock_llm_pro,mock_prompt_loader,mock_llm,base_state):
-    
-    mock_llm_pro.invoke.return_value.content="Nike's revenue was 240 billion for year 2020"
-   
-    mock_prompt_loader.prompts.get.return_value={
-        "retriever_auditor_prompt": """ Planner Tasks: {planner_tasks} Context: {context}""",
+@patch("src.agent.nodes.retrieval_auditor.log_to_mlflow")
+@pytest.mark.asyncio
+async def test_retriever_output(
+    mock_log, 
+    mock_llm_pro, 
+    mock_prompt_loader, 
+    mock_resilient, 
+    mock_compress, 
+    base_state
+):
+    # 1. Setup Mocks
+    mock_compress.return_value = "Compressed evidence block"
+    mock_prompt_loader.prompts.get.return_value = {
+        "retriever_auditor_prompt": "Planner Tasks: {planner_tasks} Context: {context}",
         "version": "1.0.0"
-}
-
-   
-    mock_auditor_output= Retriever_feedback(
-        needs_revision = "False",
-        retriever_critique="All evdience found",
+    }
+    
+    # 2. Setup Structured Output Mock
+    mock_auditor_output = Retriever_feedback(
+        needs_revision=False,
+        retriever_critique="All evidence found",
         found_evidence=[EvidenceFound(
-             task_name="What is nike's revenue in 2020?",
-             evidence="Nike's revenue is 50 billion as of 2020",
-             status= "Found",
-             company="Nike",
-             year="2020",
-             source="10k",
-             page="67",
-             quote="Nike revenue report end of financial year for 2020 as 50 billion"
+            task_name="Retrieve Nike revenue", 
+            status="found", 
+            evidence="50B", 
+            source="10k", 
+            page="67", 
+            company="Nike", 
+            year="2020", 
+            quote="..."
+        )],
+        no_evidence_found=False, 
+        no_evidence_found_reason="None"
     )
-    ]
-    )
-
+    
     mock_structured = MagicMock()
-    mock_structured.ainvoke.return_value = {
+    mock_structured.ainvoke = AsyncMock(return_value={
         "parsed": mock_auditor_output,
         "raw": mock_llm_output
-    }
-
-    mock_llm.with_structured_output.return_value = mock_structured
-
-    result= retrieval_auditor_node(base_state)
+    })
     
-    assert result["turn_count"]==1
-    assert result["context"][0]["evidence"]=="Nike's revenue reported 540 million for year 2020"
+    # This is the critical line: we are patching resilient_pro (the object used in your node)
+    mock_resilient.with_structured_output.return_value = mock_structured
+
+    # 3. Execution
+    result = await retrieval_auditor_node(base_state)
     
-    assert result["audit_wiki"][0].evidence =="Nike's revenue is 50 billion as of 2020"
-    assert result['retriever_feedback'].retriever_critique =="All evdience found"
+    # 4. Assertions
+    assert result["turn_count"] == 1
+    # Check context from base_state
+    assert base_state["context"][0]["evidence"] == "Nike's revenue reported 540 million for year 2020"
+    # Check output from mock_auditor_output
+    assert result["audit_wiki"][0].evidence == "50B"
+    assert result['retriever_feedback'].retriever_critique == "All evidence found"

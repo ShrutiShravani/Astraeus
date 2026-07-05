@@ -1,4 +1,3 @@
-from sympy.solvers.ode.systems import _match_second_order_type
 from qdrant_client import models
 from src.agent.state import AgentState
 from flashrank import Ranker, RerankRequest
@@ -11,6 +10,7 @@ from src.utils.monitoring import log_to_mlflow
 from deepeval.metrics import ContextualPrecisionMetric, ContextualRelevancyMetric
 from deepeval.test_case import LLMTestCase
 from custom_logging import logger
+import mlflow
 
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 ranker = Ranker(model_name="rank-T5-flan", cache_dir="~/.cache")
@@ -236,6 +236,7 @@ def hybrid_retriever_node(state: AgentState):
 
     initial_contexts = []
     final_contexts=[]
+    entry={}
     for chunk in top_chunks:
         entry={
         "company": chunk["company"], # Use the one tagged during retrieval
@@ -243,16 +244,15 @@ def hybrid_retriever_node(state: AgentState):
         "source":chunk["source"],
         "page": chunk["page"],
         "evidence":chunk["text"]
-    }
-    
+    }  
 
-        initial_contexts.append(entry)
+
+    initial_contexts.append(entry)
     print(f"length of initial_contexts:{len(initial_contexts)}")
     
     final_contexts = pre_filtering(initial_contexts, plan)
 
  
-
     node_latency = time.time() - start_ts
     node_metrics = {
         "node_benchmarks": {

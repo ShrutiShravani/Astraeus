@@ -32,17 +32,6 @@ llm_mini = ChatOpenAI(model="gpt-4o",streaming=True, temperature=0, max_retries=
 resilient_pro = llm_pro.with_fallbacks([llm_pro_snap, llm_mini])
 resilient_mini = llm_mini.with_fallbacks([llm_pro])
 
-def extract_from_verified_evidence(context):
-    coordinates = []
-    for c in context:
-        coordinates.append({"source": c.get('source'),
-        "page": c.get('page'),
-        "company": c.get('company'),
-        "year": c.get('year'),
-        "evidence": c.get('evidence')}
-        )
-    
-    return  coordinates
     
 
 def unified_generator_node(state: AgentState):
@@ -52,28 +41,26 @@ def unified_generator_node(state: AgentState):
     query_type = state.get("type") 
     math_result = state.get("calculation_result") 
     feedback = state.get("reflection_feedback")
-    raw_context = state.get("final_context","")
     is_follow_up = state.get("is_follow_up", False)
-    saved_context = state.get("context_history", [])
     audit_wiki=state.get("audit_wiki","")
     alignment_status=state.get("alignment_status")
     narrative_conlfict_score=state.get("narrative_conflict_score")
     divergence_type =state.get("divergence_type")
     divergence_reason =state.get("divergence_reason")
     conflict_rationale = state.get("conflict_rationale")
-    max_retries=0
-    attempts=2
-
-    print(f"[DEBUG] Wiki Size: {len(audit_wiki)} items")
-    print(f"[DEBUG] Raw Context Size: {len(str(raw_context))} chars")
+    wiki_archive = state.get("wiki_archive", "")
+    max_retries=2
+    attempts=0
 
 
     # -----------------------
-    
-    consolidated_block = ""
-    if audit_wiki and is_follow_up:
-        wiki_str = "\n".join([f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence}: {item.quote})" for item in audit_wiki])
-        consolidated_block += f"### [1] VERIFIED FINANCIAL DATA (Wiki):\n{wiki_str}\n"
+  
+    wiki_str = "\n".join([f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence}: {item.quote})" for item in audit_wiki])
+    final_context_for_llm = f""" ### HISTORICAL LEDGER (ARCHIVE)
+        {wiki_archive if wiki_archive else "No historical archive yet."}
+        ### ACTIVE INVESTIGATION (WIKI)
+        {wiki_str if wiki_str else "No new findings this turn."}
+        """
 
 
 
@@ -99,16 +86,11 @@ def unified_generator_node(state: AgentState):
        
         }
 
-    final_report_with_evidence = ""
  
     parser = JsonOutputParser(pydantic_object=FinalGeneration)
     
     # 1. Coordinate-Based Context Construction
     
-    evidence = wiki_str
-    print(f"evdience:{evidence}")
- 
- 
 
     follow_up_instruction=" "
     if is_follow_up:
@@ -128,9 +110,14 @@ def unified_generator_node(state: AgentState):
     is_correction = (feedback is not None and feedback.needs_revision and state.get("target_node") == "generator")
     
     revision_instruction = ""
-    if is_correction:
+    if previous_draft and is_correction:
         print("correction required")
         revision_instruction = f"""
+
+         ### THE REVISION PROTOCOL (CORRECTION MODE):
+            The Auditor rejected your previous draft {previous_draft}. 
+            FIX the errors mentioned in the REVISION REQUIRED section.
+            DO NOT APPEND. REWRITE the report so it is clean and accurate.
         ### REVISION REQUIRED
         Audit Critique: {feedback.critique}
         Error Type: {feedback.err_type or "N/A"}
@@ -143,7 +130,7 @@ def unified_generator_node(state: AgentState):
         Do not introduce new facts outside the provided evidence.
         Preserve all correct facts, calculations, and valid citations from the previous draft.
         """
-            
+
 
     # 2. Refined Rule Set
     filter_rule = f"""
@@ -179,27 +166,16 @@ def unified_generator_node(state: AgentState):
     """
 
 
-    if previous_draft and  is_correction:
-            # RULE: REWRITE (Fix the mistake in the existing report)
-            merge_instruction = f"""
-            ### THE REVISION PROTOCOL (CORRECTION MODE):
-            The Auditor rejected your previous draft {previous_draft}. 
-            FIX the errors mentioned in the REVISION REQUIRED section.
-            DO NOT APPEND. REWRITE the report so it is clean and accurate.
-            """
-    else:
-        merge_instruction=""
 
     # Fix: Cleaned up the double prompt nesting and clarified Type C instruction
     system_prompt = raw_template.format(
         planner_tasks=planner_tasks,
-        merge_instruction=merge_instruction,
         revision_instruction=revision_instruction,
         follow_up_instruction=follow_up_instruction,
         mode_instruction=mode_instruction,
         query_type= query_type,
         math_result=math_result,
-        final_context_str=consolidated_block,
+        final_context_str= final_context_for_llm,
         alignment_status = alignment_status,
         narrative_conflict_score =narrative_conlfict_score,
         divergence_type= divergence_type,
@@ -211,14 +187,15 @@ def unified_generator_node(state: AgentState):
     
     system_prompt_format= system_prompt +"\n\n" + parser.get_format_instructions()
     
-    user_content = f"QUERY: {state['query']}\n\nCONTEXT:\n{raw_context}"
+    user_content = f"QUERY: {state['query']}"
 
     if len(system_prompt_format)+len(user_content)>25000:
         logger.warning("Context window bloat: Truncating evidence to prevent 429 error.")
         # Logic: Either truncate or return a failure to trigger an Audit Summary node
         return {
             "generator_failed": True,
-            "error": "Context length exceeded. Please run a 'Summarize Evidence' task."
+            "error": "Context length exceeded. Please run a 'Summarize Evidence' task.",
+            "force_compact": True
         }
 
     
@@ -269,21 +246,23 @@ def unified_generator_node(state: AgentState):
             "generator_failed": True
         }
 
+    plan_output = None
     
     while attempts<max_retries and plan_output is None:
         try:
             cleaned_text= raw_text.replace("```json", "").replace("```", "").strip()
 
             plan_output= parser.parse(cleaned_text)
-
-            if not plan_output:
-                raise ValueError("JSON schema missing 'report' key.")
-                
+            if plan_output:
+                print("--- SUCCESS: Parsed JSON ---")
+                break # Exit the loop if successful
+            else:
+                raise ValueError("Parser returned None")
+            
         except Exception as e:
-            attempts+=1
-            if attempts<=max_retries:
-                    logger.error(f"Parser/Schema failure: {e}")
-                    return {"generator_failed": True, "error": "LLM failed to return expected schema."}
+            attempts += 1
+            logger.error(f"Attempt {attempts} failed: {e}")
+            # DO NOT RETURN HERE. Let the loop continue to the next attempt.
     
    
     #get raw results for metrics calculation
@@ -306,40 +285,6 @@ def unified_generator_node(state: AgentState):
     print(f"final_report:{final_report}")
     
 
-
-    final_context=[]
-
-    if is_correction:
-        # In a correction, the Retriever didn't run. Use the history we already have.
-        final_context = saved_context
-    else:
-    
-        final_context=raw_context
-    
-    """
-    #APPEND CONTETX HISTORY
-    # 1. Initialize a clean string for the NEW evidence found in this run
-    current_evidence_str = "\n\n### AUDIT EVIDENCE & SOURCE CITATIONS (NEW):\n"
-    if not final_context:
-        current_evidence_str += "NO MATCHING EVIDENCE FOUND IN CONTEXT.\n"
-    else:
-        sorted_context= sorted(final_context,key=lambda x:str(x.get('year')))
-        for idx,c in enumerate(sorted_context):
-            # Use += to append, not = to overwrite!
-            company= c.get('company') or c.get('company')
-            year= c.get('year') or c.get('year')
-            src = c.get('source') or c.get('SOURCE') or "Unknown"
-            pg = c.get('page') or c.get('PAGE') or "?"
-            txt = c.get('evidence') or c.get('content') or "No text."
-            current_evidence_str += f"[{idx+1}] Company: {company} | Year: {year} | Source: {src} | Page: {pg}\nSnippet: {txt[:2000]}...\n\n"
-            print(current_evidence_str)
- 
-        # Just the new report and its evidence
-        final_report_with_evidence = f"{final_report}\n{current_evidence_str}"
-        print("final_report appended with evidence")
-    """
-    
-    final_report_with_evidence = f"{final_report}\n{raw_context}"
     print("final_report appended with evidence")
     score= state.get("narrative_conflict_score")
     if type == "C" and score>1:
@@ -349,13 +294,11 @@ def unified_generator_node(state: AgentState):
     
 
     return {
-        "generation": final_report_with_evidence,
+        "generation": final_report,
         "turn_count": current_turn,
-        "context_history":final_context,
         **node_results,
         "steps": [
             f"- Mode: {query_type} Analysis.",
-            f"- Evidence Integration: Synthesized {len(raw_context)} source snippets.",
             f"- Refinement: {'Applied auditor feedback' if is_correction else 'Initial generation'}.",
             f"- Audit Status: Marked as {state.get('audit_status', 'Pending')}."
         ]

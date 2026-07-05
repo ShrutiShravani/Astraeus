@@ -19,8 +19,8 @@ def auditor_node(state:AgentState):
     
     # 2. Inspect for Divergence (Type C logic)
     math_val = state.get("calculation_result")
-    final_evidence = state.get("final_context", [])
     benchmarks = state.get("node_benchmarks", {})
+    audit_wiki=state.get("audit_wiki","")
 
 
     total_cost=sum(v.get('cost',0)for v in benchmarks.values())
@@ -43,12 +43,13 @@ def auditor_node(state:AgentState):
         "planner_tasks": [getattr(t,'title',str(t)) for t in state.get("plan", [])],
         "forensic_evidence": {
             "math_verified": math_val,
-            "sources_used":[getattr(t, 'doc_source', 'N/A') for t in state.get("plan", [])],
-            "top_source":final_evidence
+            "sources_used":[getattr(t, 'doc_source', 'N/A') for t in state.get("plan", [])]
+        
         },
         "agent_logic_trace": steps_taken, # This shows the node-by-node history
         "status":audit_status,
         "performance_breakdown": benchmarks ,
+        "final_evidence":audit_wiki,
         
         "final_report_preview": state.get("generation", "")[:2000] + "..." # Keep logs lean
     }

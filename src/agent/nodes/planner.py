@@ -3,7 +3,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from typing import List
 import time
-from src.agent.state import AgentState, Planner, PurifierOutput
+from src.agent.state import AgentState, Planner
 from dotenv import load_dotenv
 import os
 from src.utils.monitoring import PerformanceCallback
@@ -39,12 +39,7 @@ def planner_node(state:AgentState):
     #current_existing_report = state.get("report_history", "")
     is_follow_up=state.get("is_follow_up")
     planner_instruction = ""
-    """
-    if current_existing_report:
-       existing_report= [current_existing_report[-1]] 
-    else:
-        existing_report = "No previous summary found. Treat this as a new investigation."
-    """
+
     if state.get("human_decision") == "is_investigate":
         # Keep only the relevant context
         history = [history[-1]] if history else []  
@@ -153,7 +148,8 @@ def planner_node(state:AgentState):
         audit_wiki=already_verified_facts, # <--- THIS IS THE "FACT BRIDGE"
         locked_company=prev_company,
         locked_year=prev_year
-        )
+    )
+
    
     # Invoke the LLM directly with the string
     try:

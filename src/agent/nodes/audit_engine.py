@@ -47,6 +47,8 @@ def audit_engine(state: AgentState):
     current_query = state.get("query")
     planner_tasks = state.get("plan")
     generated_report= state.get("generation")
+    wiki_archive = state.get("wiki_archive", "")
+    audit_wiki= state.get("audit_wiki","")
 
     try:
         node_config = promptloader.prompts.get('audit_engine', {})
@@ -60,24 +62,29 @@ def audit_engine(state: AgentState):
         }
 
     context_str = ""
-    context = state.get("context_history",[])
-    for c in context:
-        context_str += f"--- [COORD: {c['source']} | PAGE: {c['page']}] ---\n{c['evidence']}\n\n"
+    wiki_str = "\n".join([f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence}: {item.quote})" for item in audit_wiki])
+    context_str = f""" ### Evidences so far (ARCHIVE)
+        {wiki_archive if wiki_archive else "No historical archive yet."}
+        ### ACTIVE INVESTIGATION (WIKI)
+        {wiki_str if wiki_str else "No new findings this turn."}
+        """
+
     
     math_val = state.get('calculation_result')
     math_info = f"CALCULATED_MATH: {math_val}" if math_val is not None else "CALCULATED_MATH: N/A"
     
+    has_history = bool(wiki_archive and wiki_archive.strip())
 
     mode_instruction = f"""
-    ### MODE: INITIAL AUDIT
-    - This is the FIRST turn.
+    ### MODE: {"CONTINUOUS AUDIT" if has_history else "INITIAL AUDIT"}
+    - Status: {"This is a follow-up turn. You must integrate findings from the ARCHIVE with new evidence." if has_history else "This is the first turn."}
     - Audit the report ONLY against the CURRENT QUERY: "{current_query}".
-    - Every material fact, figure, conclusion, and calculation in the report MUST be supported by the CURRENT EVIDENCE.
-    - If the report contains unsupported claims not found in the CURRENT EVIDENCE, treat them as hallucinations.
+    - Evidence Rules: Every fact in the report MUST be supported by either the ARCHIVE or the ACTIVE INVESTIGATION (WIKI).
+    - Hallucination Policy: Any claim not found in the ARCHIVE or WIKI is a hallucination.
     - The report must materially answer the CURRENT QUERY.
     """
     
-    
+
 
     # ADVANCED PROMPT: Separates Data Validation from Writing Validation
     audit_prompt = raw_template.format(
@@ -106,7 +113,7 @@ def audit_engine(state: AgentState):
 
     except Exception:
         logger.exception(
-            f"Sudit Engine LLM invocation failed | prompt_version={prompt_version}"
+            f"Audit Engine LLM invocation failed | prompt_version={prompt_version}"
         )
         return {
             "audit_engine_failed": True

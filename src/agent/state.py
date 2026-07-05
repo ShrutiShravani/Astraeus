@@ -92,11 +92,13 @@ class Planner(BaseModel):
     target_year:List[int]= Field(description="List of all year required for evidence")
     target_company:List[str] = Field(description="List of all company about which query is asked")
 
+"""
 class Coordinate(BaseModel):
     # This sub-model also needs the strict config
     source: str = Field(description="The source document")
     # Use Union to catch cases where the LLM sends the page as a string
     page: Union[int, str] = Field(description="The page number")
+"""
 
 class DivergenceAnalyst(BaseModel):
     alignment_status: str = Field(
@@ -134,7 +136,7 @@ class DivergenceAnalyst(BaseModel):
 
     Return 'None' if no divergence is detected.
     """)
-    divergence_reason:str=Field(decsription="""
+    divergence_reason:str=Field(description="""
     Short explanation of why the divergence was classified.
 
     Must summarize the conflict between transcript evidence and filing evidence.
@@ -148,6 +150,8 @@ class DivergenceAnalyst(BaseModel):
 
     conflict_rationale:str  =Field(description="A concise justification explaining the forensic discrepancy. This field serves as the Proactive Summary for the human auditor, distilling why the system flagged the specific statement as contradictory.")
 
+class ForensicArchive(BaseModel):
+    summary_table: str = Field(description="A markdown table of verified facts derived from the audit_wiki")
 
 class FinalGeneration(BaseModel):
     report: str = Field(description="The full markdown audit report")
@@ -167,6 +171,13 @@ class MathPlan(BaseModel):
     reasoning: str = Field(description="Why these specific numbers are needed for the formula.")
     metrics: List[FinancialMetric] = Field(description="List of extracted numbers from the context.")
     python_formula: str = Field(description="The Python code to execute (e.g., 'result = net_income / total_revenue').")
+
+
+# Your custom reducer: It handles the formatting (the \n) automatically
+def append_archive(existing: str, new_val: str) -> str:
+    if not existing:
+        return new_val
+    return f"{existing}\n{new_val}"
 
 class AgentState(TypedDict):
     query:str
@@ -224,3 +235,5 @@ class AgentState(TypedDict):
     divergence_analyst_failed:bool=False
     prompt_purifier_failed:bool=False
     ask_user:bool=False
+    wiki_archive: Annotated[str, append_archive]
+    force_compact:bool =False

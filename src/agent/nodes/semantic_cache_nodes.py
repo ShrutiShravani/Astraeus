@@ -11,6 +11,13 @@ embeddings = get_embeddings()
 
 def semantic_cache_check_node(state:AgentState):
     start_ts= time.time()
+    year = state.get("target_year") 
+    if isinstance(year, list):
+        year_to_use = int(year[0])
+    else:
+        year_to_use = int(year)
+       
+    company= state.get("target_company")
     print("checking for cache")
     current_turn = state.get("turn_count", 0) + 1
     query = state.get("query", [])
@@ -25,12 +32,22 @@ def semantic_cache_check_node(state:AgentState):
     
     latency= round(time.time()-start_ts,3)
     
-
-   
+    where_conditions = {}
+    if company and year:
+        where_conditions = {
+            "$and": [
+                {"company": {"$eq": str(company).upper()}},
+                {"year": {"$eq": int(year_to_use)}}
+            ]
+        }
+     
+    print(f"year:{year}")
+    print(f"company:{company}")
  # Search for similar queries with a distance threshold (1 - distance = similarity)
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=1,
+        where=where_conditions,
         include=["metadatas", "documents", "distances"]
     )
 
@@ -67,6 +84,14 @@ def semantic_cache_check_node(state:AgentState):
 def finalize_audit(state: dict):
     """The Final Node: Runs after Human Review is complete"""
     decision = state.get("human_decision")
+    raw_year = state.get("target_year") 
+    if isinstance(raw_year, list):
+        clean_year = int(raw_year[0])
+    elif isinstance(raw_year, str):
+        clean_year = int(raw_year)
+    else:
+        clean_year = int(raw_year)
+    company= state.get("target_company")
     if state.get("is_cached") is True:
         print("--- SKIP CACHE SAVE: Data already exists in ChromaDB ---")
         return state
@@ -88,7 +113,10 @@ def finalize_audit(state: dict):
             metadatas=[{
                 "query_fingerprint": semantic_key,
                 "timestamp": "2026-03-20",
-                "status": "human_verified"
+                "status": "human_verified",
+                "company": str(company).upper(), 
+                "year": int(clean_year) if clean_year else 0
+
             }]
         )
         print("--- GRAPH COMPLETED: Report saved to Semantic Cache ---")

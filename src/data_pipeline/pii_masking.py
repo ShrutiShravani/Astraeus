@@ -130,7 +130,7 @@ def process_single_markdown_worker(task, attempt):
         return result
 
 
-def batch_masking_pipeline_runner(md_paths: list[Path], max_workers=4):
+def batch_masking_pipeline_runner(md_paths:list[Path], max_workers=4):
     """
     ORCHESTRATION LAYER: Splits Markdown files into page tasks, coordinates execution pools,
     aggregates results, writes individual page failures to the DLQ, and builds clean outputs.

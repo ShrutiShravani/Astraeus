@@ -64,14 +64,14 @@ async def retrieval_auditor_node(state:AgentState):
     context= state.get("context")
     evidence_found=[]
     combined_critique=[]
-
-
+    
+  
     plan = state.get("plan", [])
     
     planner_tasks= "\n".join([f"Task{i+1} {t.title} | Source: {t.doc_source}" for i, t in enumerate(plan)]) 
     
     print(f"Debug-----Stratign compresstion {time.time()}")
-    compressed_evidence= await query_aware_compression(context,current_query,planner_tasks)
+    compressed_evidence= await query_aware_compression(context,current_query)
     print(f"compressed_evidence_summary:{compressed_evidence}")
 
     try:
@@ -155,7 +155,6 @@ async def retrieval_auditor_node(state:AgentState):
         "turn_count": current_turn,
         "audit_wiki":evidence_found,
         **node_results,
-        "context": context,
         "retriever_feedback": output,
         "retriever_audit_attempts": current_attempts,
         "critique":  combined_critique,

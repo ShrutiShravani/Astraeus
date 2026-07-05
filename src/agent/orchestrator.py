@@ -9,6 +9,7 @@ from src.agent.nodes.purifier_node import prompt_purifier_node
 from src.agent.nodes.audit_engine import audit_engine
 from src.agent.nodes.system_guradrail import system_1_guard # The actual function
 from src.agent.nodes.planner import planner_node
+from src.agent.nodes.compaction_node import compaction_node
 from src.agent.nodes.human_review import human_review_node
 from src.agent.nodes.unified_generator import unified_generator_node
 from src.agent.nodes.extractor import math_extractor_node
@@ -29,8 +30,14 @@ def route_after_extractor(state:AgentState):
     
     return "python_repl"
 
+def should_compact(state: AgentState):
+    if len(state.get("audit_wiki", [])) >= 5:
+        return "compact"
+    return "generate"
 
 def route_after_generator(state:AgentState):
+    if state.get("force_compact") and state.get("generator_failed"):
+        return "force_compact"
     if state.get("generator_failed"):
         return "human_review"
     
@@ -38,6 +45,8 @@ def route_after_generator(state:AgentState):
 
 
 def route_after_planner(state: AgentState):
+    if state.get("is_cached"):
+        return "human_review"
     if state.get("target_node")=="END":
         return "end"
     if  len(state["plan"])==0:
@@ -45,7 +54,7 @@ def route_after_planner(state: AgentState):
         return "generator"
     if state.get("planner_failed"):
         return "end"      # or planner_failure_node
-
+    \
     return "retriever"
 
 def route_after_prompt_purifier(state):
@@ -61,7 +70,6 @@ def route_after_retriever_auditor(state: AgentState):
     feedback= state.get("retriever_feedback")
     attempts = state.get("retriever_audit_attempts", 0)
     needs_revision = feedback.needs_revision
-    query_type = state["type"]
 
     if state.get("retriever_auditor_failed"):
         return "end"
@@ -71,27 +79,32 @@ def route_after_retriever_auditor(state: AgentState):
             return "human_review"
         print(f"--- RETRIEVER REJECTED (Attempt {attempts}): LOOPING TO PLANNER ---")
         return "planner"
-    else:
-        if query_type == "B":
-        # Skip Math! Go straight to the Generator
-          return "generator" 
-        
         
     return "extractor"
+
+def route_after_compaction(state):
+    if state.get("compaction_failed"):
+        return "end"
     
+    return "generator"
+
 def route_cache(state):
     val = state.get("is_cached", False)
     print(val)
 
     if val is True:
-        return "hit"
+        print("--- CACHE HIT: Proceeding to Review ---")
+        return  route_after_planner
+       
     else:
         print("continue to prompt purifier")
-        return "prompt_purifier"
+        return route_after_planner
 
 def route_after_python_repl(state):
     if state.get("type")=="C":
         return "divergence_analyst"
+    elif len(state.get("audit_wiki", [])) >= 5:
+            return "compact"
     else:
         return "generator"
 
@@ -104,6 +117,8 @@ def route_after_retriever(state):
 def route_after_divergence_analyst(state):
     if state.get("divergence_analyst_failed"):
         return "end"
+    elif len(state.get("audit_wiki", [])) >= 5:
+            return "compact"
     else:
         return "generator"
 
@@ -128,6 +143,7 @@ workflow.add_node("guard",system_1_guard)
 workflow.add_node("prompt_purifier",prompt_purifier_node)
 workflow.add_node("planner",planner_node)
 workflow.add_node("retriever_auditor",retrieval_auditor_node)
+workflow.add_node("compaction_node",compaction_node)
 workflow.add_node("extractor",math_extractor_node)
 workflow.add_node("divergence_analyst",divergence_analyst_node)
 workflow.add_node("generator",unified_generator_node)
@@ -138,25 +154,19 @@ workflow.add_node("human_review", human_review_node)
 workflow.add_node("cache_add",finalize_audit)
 workflow.add_node("user_auditor",auditor_node)
 
+workflow.add_edge("planner", "cache_check")
+
 # 2. Security Conditional Edge
 workflow.add_conditional_edges(
     "guard",
     # We use a lambda to check the boolean and return the routing string
     lambda state: "secure" if state["is_safe"] else "unsafe",
     {
-        "secure": "cache_check",
+        "secure": "prompt_purifier",
         "unsafe": END
     }
 )
 
-workflow.add_conditional_edges(
-    "cache_check",
-    route_cache,
-    {
-        "hit": "human_review",
-        "prompt_purifier": "prompt_purifier"
-    }
-)
 workflow.add_conditional_edges(
     "divergence_analyst",
     route_after_divergence_analyst,
@@ -239,11 +249,12 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_conditional_edges(
-    "planner",
+    "cache_check",
     route_after_planner,
     {    
         "retriever": "retriever",
         "generator":"generator",
+        "human_review":"human_review",
         "end": END
     }
 )
@@ -271,3 +282,12 @@ workflow.add_conditional_edges(
     }
 )
 
+
+workflow.add_conditional_edges(
+    "compaction_node",
+    route_after_compaction,
+    {    
+        "extractor": "extractor",
+        "end": END
+    }
+)
