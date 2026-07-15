@@ -65,69 +65,61 @@ def planner_node(state:AgentState):
         }
 
     audit_wiki=state.get("audit_wiki","")
-    already_verified_facts= ",".join([f"Year: {item.year} | Company: {item.company} | Task: {item.task_name} | Evidence :{item.evidence} in {item.source} p.{item.page} {item.quote}"for item in audit_wiki])
+    already_verified_facts= ",".join([f"Year: {item.year} | Company: {item.company} | Task: {item.task_name} | Evidence :{item.evidence} in {item.source} p.{item.page}"for item in audit_wiki])
     
     if retrieved_feedback:
         planner_instruction=f"""
-        
-        You are in a recovery loop. Your goal is NOT to solve the whole query, but to solve the **[RETRIEVAL_GAP]** identified by the Auditor.
+        You are operating in RECOVERY MODE. You are forbidden from performing the original audit.
 
-        **STATE KNOWLEDGE (The "Settled Law"):**
-        - COMPLETED DATA: {audit_wiki} 
-        - STOP: Do NOT generate tasks for the metrics listed above. They are already verified.
-        - Do not create tasks for complete {current_query}
+        ### 1. EXCLUSION LIST (ABSOLUTELY PROHIBITED)
+        The following metrics are ALREADY VERIFIED. Do NOT generate tasks for these:
+        {audit_wiki}
 
-        **THE GAP (Your Only Objective):**
-        - AUDIT CRITIQUE: {retrieved_feedback.retriever_critique}
+        ### 2. YOUR ONLY OBJECTIVE (THE GAP)
+        Focus exclusively on this critique:
+        {retrieved_feedback.retriever_critique}
 
-        **INSTRUCTIONS FOR TASK GENERATION:**
-        1. **Targeted Execution:** Rewrite tasks to focus ONLY on the missing {prev_company} {prev_year} data mentioned in the Critique.
-        2. **Zone Intelligence:** If a line item was missing, shift 'Zone' (e.g., from 'Narrative' to 'Financial Tables' or 'Item 8').
-        3. **Keyword Expansion:** If previous keywords failed, use synonyms or broader industry terms (e.g., instead of 'Inventory', use 'Current Assets' or 'Supply Chain').
-        4. **Constraint:** Maintain Company: {prev_company} and Year: {prev_year}. Do NOT deviate.
+        ### 3. STRICT CONSTRAINTS
+        - OUTPUT FORMAT: Provide ONLY tasks that address the GAP above.
+        - PROHIBITION: If a task's objective is already satisfied by the EXCLUSION LIST, you must drop that task.
+        - CALCULATION RULE: If {prev_company} {prev_year} metrics are already in the EXCLUSION LIST, you are forbidden from creating retrieval tasks for them. Assume the system will calculate them.
+        - SCOPE: Only target {prev_company} {prev_year}.
 
-        **DIRECTIONS:**
-        - If the Auditor flagged a missing doc_source (Transcript/10K), the NEW plan MUST prioritize that source.
-        - Do NOT repeat the previous plan exactly. Change the strategy (Keywords/Zone) or the audit will fail again.
-            
-    """
+        ### 4. STRATEGY ADJUSTMENT
+        - Do not repeat previous strategies. 
+        - If a source was missing, explicitly switch to the required doc_source.
+        - Change your keywords/zones based on the critique provided.
+
+        Failure to follow these constraints will result in redundant work and audit failure.
+        """
         
     elif is_follow_up:
 
         planner_instruction = f"""
-        FOLLOW-UP MODE
+        FOLLOW-UP MODE: GAP ANALYSIS
 
-        VERIFIED FACTS
+        CURRENT STATE:
+        - Verified Facts: {already_verified_facts}
+        - Audit Wiki Evidence: {audit_wiki} 
+        - User Query: {current_query}
 
-        {already_verified_facts}
+        RULES:
+        
 
-        Purified User Query
+        GAP ANALYSIS: Compare the 'User Query' against 'Audit Wiki' and 'Verified Facts'. A retrieval task is REQUIRED only if the specific metric, year, or entity is NOT explicitly found in the 'Audit Wiki'.
 
-        {current_query}
+        NO DUPLICATION: If the 'Audit Wiki' contains the exact year and metric, return an empty task list []. Do not re-retrieve data you already possess.
 
-        Rules
+        TRUST THE EVIDENCE: Do not assume information exists just because it was discussed previously; it must be in the 'Audit Wiki' or 'Verified Facts' to be considered 'known'.
 
-        1. Any metric written as
+        SOURCE MAPPING: For every missing piece of information, generate a REQUIRED_FROM_SOURCE task, specifying the exact Year, Company, and Metric.
 
-        METRIC(VALUE)
+        PRIORITIZATION: For comparative queries (e.g., 2019 vs 2020), identify the delta. Only generate retrieval tasks for the missing year(s).
 
-        is already verified.
+        CALCULATION OVER RETRIEVAL (The Circuit Breaker): If the User Query asks for a ratio or derived metric (e.g., Gross Margin), and the components (e.g., Gross Profit, Revenue) are present in the 'Audit Wiki', you MUST generate a task with doc_source="NONE" and zone="INTERNAL_LOGIC". FORBIDDEN: Do not create retrieval tasks for metrics that can be computed from verified facts.
 
-        Never generate retrieval tasks for those metrics.
+        COMPONENT-DRIVEN SEARCH: If a ratio is requested and its components are MISSING from the 'Audit Wiki', generate retrieval tasks for the individual components first. Do not generate a retrieval task for the parent ratio.
 
-        2. Generate retrieval tasks ONLY for
-
-        REQUIRED_FROM_SOURCE(...)
-
-        metrics.
-
-        3. If the purified query contains no
-
-        REQUIRED_FROM_SOURCE(...)
-
-        generate zero retrieval tasks.
-
-        4. Never duplicate retrieval tasks for evidence already present in audit_wiki.
         """
     else:
         planner_instruction=f"Analyze the user query,classify a financial query type and  build a comprehensive step by step task plan."
@@ -142,7 +134,6 @@ def planner_node(state:AgentState):
     structured_planner= resilient_brain.with_structured_output(Planner,include_raw=True)
     planner_prompt  = raw_template.format(
         planner_instruction=planner_instruction,
-        history=history,
         report_summary="DEPRECATED: Refer to audit_wiki for facts",
         current_query=current_query,
         audit_wiki=already_verified_facts, # <--- THIS IS THE "FACT BRIDGE"

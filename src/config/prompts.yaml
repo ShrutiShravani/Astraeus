@@ -35,7 +35,7 @@ planner :
     - **LOCKED YEAR:** {locked_year}
     - **VERIFIED FACTS (Wiki):** {audit_wiki}
     - **PREVIOUS CONTEXT:** {report_summary}
-    - **QUERY HISTORY:** {history}
+  
 
     CRITICAL INSTRUCTION: 
     -"If the current query does not mention a company or year, you MUST populate extracted_company and extracted_year using the values provided in [LOCKED ENTITY] and [LOCKED YEAR]. Do not return empty lists for these fields."
@@ -61,7 +61,20 @@ planner :
     - **TRANSCRIPT PATH:** Use for management sentiment. Set `zone="Q&A Session"`.
     - **INTERNAL LOGIC:** Set `doc_source="NONE"` and `zone="INTERNAL_LOGIC"` for tasks that only require math or synthesis of existing Wiki facts.
     - **RATIO/PROOF:** Every math task must have sub-tasks to extract the raw Numerator and Denominator. Do not allow the Generator to guess.
+    - **CALCULATION RULE** :If the query requires a DERIVED METRIC (ratio, 
+        margin, growth rate), you MUST decompose into 
+        COMPONENT tasks first.
 
+        Example:
+        Query: "Gross Margin 2022"
+        WRONG: 1 task — "Calculate Gross Margin"
+        RIGHT: 2 tasks:
+          Task 1: "Extract Gross Profit 2022" → 10K → Item 8
+          Task 2: "Extract Total Revenue 2022" → 10K → Item 8
+
+        NEVER create a retrieval task for a calculated metric.
+        Only create retrieval tasks for raw financial figures.
+        Calculation happens AFTER retrieval.
     ### 5. CRITICAL EXTRACTION GUIDELINES
     - **extracted_company:** Full uppercase name. If missing, use {locked_company}.
     - **extracted_year:** List each year individually. If a comparison is requested, ensure separate tasks are created for missing years.
@@ -507,10 +520,13 @@ compaction_node:
    compaction_prompt: |
     You are a Forensic Ledger Keeper. 
     Synthesize the following raw audit findings into a clean, markdown table.
-    
-    Raw Findings:{audit_wiki}
+
+    Raw Findings:
+    {wiki_text}
+
     Format the table with these columns: | Year | Metric | Value | Source | Page | Forensic Fact |
-    
+    Return ONLY the markdown table.
+
 
 query_purifier:
   version: "v1.1.0"
@@ -524,7 +540,7 @@ query_purifier:
 
     ### RULES
     1. ENTITY IDENTIFICATION:
-       Identify the [Company Name] and [Fiscal Year] in the query.
+       CRITICAL: Identify the Company Name  "nike" and Fiscal Year is there in the query or not.
        - If they are missing and there is no Conversation History, you MUST trigger 'clarify' and ask for them.
        - If they are present in the 'Current User Query', keep them exactly as written. NEVER replace them with placeholders.
 
@@ -535,13 +551,7 @@ query_purifier:
        - ELSE (If context exists):
          - Use Rule 3 (Audit Logic) to refine the query.
 
-    3. AUDIT LOGIC (Use when context exists):
-       - Resolve all pronouns using 'Conversation History'.
-       - Use 'Verified Facts' to check if information is already known.
-       - If info exists: Rewrite as METRIC(VALUE).
-       - If info is missing: Rewrite as REQUIRED_FROM_SOURCE(metric).
-
-    4. OUTPUT REQUIREMENTS:
+    3. OUTPUT REQUIREMENTS:
        - action: 'rewrite' OR 'clarify'.
        - If 'rewrite', populate 'rewritten_query'.
        - If 'clarify', populate 'clarification_question'.

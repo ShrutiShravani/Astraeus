@@ -49,7 +49,7 @@ def compaction_node(state: AgentState):
     except Exception as e:
         logger.exception(e)
         return {
-             "compaction_node_failed": True
+             "compaction_failed": True
        
         }
 
@@ -57,20 +57,15 @@ def compaction_node(state: AgentState):
     # 2. Define the Structured Compressor
     # Use resilient_mini (gpt-4o-mini) here for cost efficiency
     structured_compressor = resilient_mini.with_structured_output(ForensicArchive, include_raw=True)
+    compaction_prompt={
+        {audit_wiki}
+    }
     
-    compaction_prompt = f"""
-    You are a Forensic Ledger Keeper. 
-    Synthesize the following raw audit findings into a clean, markdown table.
-    
-    Raw Findings:
-    {audit_wiki}
-    
-    Format the table with these columns: | Year | Metric | Value | Source | Page | Forensic Fact |
-    """
+
     
     try:
         # Use ainvoke for async flow
-        response =  structured_compressor.ainvoke(compaction_prompt, config={"callbacks": [perf_cb]})
+        response =  structured_compressor.invoke(compaction_prompt, config={"callbacks": [perf_cb]})
         parsed_result = response["parsed"]
         new_table_rows = parsed_result.summary_table
     except Exception as e:
@@ -82,18 +77,19 @@ def compaction_node(state: AgentState):
     new_archive = f"{current_archive}\n{new_table_rows}".strip()
     
     # 4. Capture Metrics (Reuse your node_metrics logic)
-    metrics_getter = get_node_metrics("compaction_node", response, perf_cb, start_ts)(state)
+    metrics_getter = get_node_metrics("compaction_node", response, perf_cb, start_ts)
 
     node_results = metrics_getter(state)
     node_results["prompt_version"] = prompt_version
     
     try:
-        log_to_mlflow("planner",node_results,step=current_turn)
+        log_to_mlflow("compaction_node",node_results,step=current_turn)
     except Exception as e:
         logger.warning(f"MLflow node logging failed: {e}")
     
     return {
         "turn_count": current_turn,
+        "generator_failed": False,
         **node_results,
         "wiki_archive": new_archive,
         "audit_wiki": [], # RESET: Clearing the working paper

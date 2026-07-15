@@ -1,4 +1,3 @@
-from src.agent.nodes import retriever
 from src.agent.state import AgentState
 
 

@@ -14,7 +14,6 @@ class Task(BaseModel):
         description="The target document source for this specific task."
     )
     zone: str = Field(description="The specific section to target (e.g., Item 8, Q&A, MD&A).")
-    rationale: str = Field(description="Why this task is necessary for the audit.")
     extracted_company: str = Field(description="Company identifed for the task")
     extracted_year: int = Field(description="Year identifed for the task")
    
@@ -30,8 +29,8 @@ class EvidenceFound(BaseModel):
     year:int= Field(description="Year")
     source: str = Field(description="Filename/Snippet ID of the source")
     page: str = Field(description="Page number")
-    quote: str = Field(description="Verbatim 5-7 word quote for verification")
-
+   
+  
 class Retriever_feedback(BaseModel):
     needs_revision:bool= Field(description="STRICT: Set to False if all raw numbers (e.g. COGS, Inventory) are present. Set to True ONLY if a document or year is missing.")
     retriever_critique:str= Field(description="Detailed explanation of hallucinations or missing info")
@@ -88,9 +87,7 @@ class Reflection(BaseModel):
 class Planner(BaseModel):
     tasks:List[Task]
     type:Literal["A","B","C"]=Field(description="A:Quant(10K),B:Qual(Both),C: Forensic (Both + Math)")
-    reasoning:str =Field(description="Brief explanation of why these specific tasks were chosen")
-    target_year:List[int]= Field(description="List of all year required for evidence")
-    target_company:List[str] = Field(description="List of all company about which query is asked")
+    
 
 """
 class Coordinate(BaseModel):

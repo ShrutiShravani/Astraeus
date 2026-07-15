@@ -39,7 +39,7 @@ async def run_nike_audit():
     # 1. DEFINE YOUR QUERIES (Until you have a file, define them here)
     nike_queries = [
         #{"type":"C","year":2022,"q": "In the 2022 Earnings Transcripts, management claims that 'consumer demand remains at an all-time high.' Verify this claim by cross-referencing the 10-K 'Inventory' growth and the 'Gross Margin' explanation. Does the 10-K suggest this demand was organic, or was it driven by aggressive promotions and inventory liquidation?"},
-        {"q":"Calculate nike gross margin for year 2020"}
+        {"q":" Calculate Nike's Gross Margin for 2022 and 2021"}
         #{"q": "How did Nike's 'Direct-to-Consumer' (DTC) strategy shift in response to global store closures in 2020 according to the 10-K Risk Factors?"}
     ]
 
@@ -52,7 +52,7 @@ async def run_nike_audit():
         with get_openai_callback() as cb:
             async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
           
-                app = workflow.compile(checkpointer=checkpointer, interrupt_before=["human_review"])
+                app = workflow.compile(checkpointer=checkpointer, interrupt_before=["human_review","human_wait"])
                 for idx,item in enumerate(nike_queries):
                     with mlflow.start_run(run_name=f"Query_{idx+1}", nested=True) as query_run:
                         set_active_run(query_run.info.run_id)
@@ -89,20 +89,22 @@ async def run_nike_audit():
                             mlflow.log_metric("system_latency",system_latency)
                             
                             
-                            if state.values.get("ask_user"):
-                                print("\nClarification Required")
-                                print(state.values.get("clarification_question"))
-                                clarification= await async_input("")
+                            if "human_wait" in state.next:
+                                if state.values.get("ask_user"):
+                                    print("\nClarification Required")
+                                    print(state.values.get("clarification_question"))
+                                    question= state.values.get("clarification_question")
+                                    clarification= await async_input("")
 
-                                await app.update_state(config,{
-                                    "query":clarification,
-                                    "query_history":[clarification],
-                                    "ask_user":False
-                                },as_node="prompt_purifier")
-    
-                                await app.ainvoke(None,config)
-                                continue
-                            
+                                    await app.update_state(config,{
+                                        "query":clarification,
+                                        "query_history":[clarification],
+                                        "ask_user":False
+                                    },as_node="human_wait")
+        
+                                    await app.ainvoke(None,config)
+                                    continue
+                                
                             
                             if "human_review" in state.next:
                                 print("\n" + "="*50)
@@ -219,7 +221,7 @@ async def run_nike_audit():
                     mlflow.log_metric("audit_passed", 0)
 
                 # Only evaluate reports we actually approved
-                used_snippets =  final_state.values.get("context_history", [])
+                used_snippets =  final_state.values.get("audit_wiki", [])
                 formatted_contexts = [c.get("evidence", "") for c in used_snippets]
             
                 raw_history = final_state.values.get("query")

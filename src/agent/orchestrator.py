@@ -17,6 +17,7 @@ from typing import List
 from src.agent.state import AgentState
 from src.agent.nodes.retrieval_auditor import retrieval_auditor_node
 from src.agent.nodes.divergence_analyst import divergence_analyst_node
+from src.agent.nodes.human_node import user_node
 
 def route_after_auditor(state:AgentState):
     if state.get("audit_engine_failed"):
@@ -30,15 +31,15 @@ def route_after_extractor(state:AgentState):
     
     return "python_repl"
 
-def should_compact(state: AgentState):
-    if len(state.get("audit_wiki", [])) >= 5:
-        return "compact"
-    return "generate"
+def route_after_compact(state: AgentState):
+    if state.get("compaction_failed"):
+        return "end"
+    return "generator"
 
 def route_after_generator(state:AgentState):
     if state.get("force_compact") and state.get("generator_failed"):
-        return "force_compact"
-    if state.get("generator_failed"):
+        return "compaction"
+    elif state.get("generator_failed"):
         return "human_review"
     
     return "user_auditor"
@@ -47,21 +48,21 @@ def route_after_generator(state:AgentState):
 def route_after_planner(state: AgentState):
     if state.get("is_cached"):
         return "human_review"
-    if state.get("target_node")=="END":
+    elif state.get("target_node")=="END":
         return "end"
-    if  len(state["plan"])==0:
+    elif  len(state["plan"])==0:
         print("--- ROUTE: Direct to Generator (Wiki Match) ---")
         return "generator"
     if state.get("planner_failed"):
         return "end"      # or planner_failure_node
-    \
+    
     return "retriever"
 
 def route_after_prompt_purifier(state):
     if state.get("prompt_purifier_failed"):
         return "end"
-    if state.get("ask_user"):
-        return "prompt_purifier"  # This halts the graph and returns control to main.py
+    elif state.get("ask_user"):
+        return "human_wait"  # This halts the graph and returns control to main.py
     
     return "planner"
 
@@ -103,10 +104,9 @@ def route_cache(state):
 def route_after_python_repl(state):
     if state.get("type")=="C":
         return "divergence_analyst"
-    elif len(state.get("audit_wiki", [])) >= 5:
-            return "compact"
-    else:
-        return "generator"
+
+   
+    return "generator"
 
 def route_after_retriever(state):
     if state.get("retriever_failed"):
@@ -143,7 +143,7 @@ workflow.add_node("guard",system_1_guard)
 workflow.add_node("prompt_purifier",prompt_purifier_node)
 workflow.add_node("planner",planner_node)
 workflow.add_node("retriever_auditor",retrieval_auditor_node)
-workflow.add_node("compaction_node",compaction_node)
+workflow.add_node("compaction",compaction_node)
 workflow.add_node("extractor",math_extractor_node)
 workflow.add_node("divergence_analyst",divergence_analyst_node)
 workflow.add_node("generator",unified_generator_node)
@@ -153,6 +153,9 @@ workflow.add_node("python_repl",python_repl_node)
 workflow.add_node("human_review", human_review_node)
 workflow.add_node("cache_add",finalize_audit)
 workflow.add_node("user_auditor",auditor_node)
+workflow.add_node("human_wait",user_node)
+
+workflow.add_edge("human_wait", "prompt_purifier")
 
 workflow.add_edge("planner", "cache_check")
 
@@ -211,6 +214,7 @@ workflow.add_conditional_edges(
     route_after_generator,
     {    
         "user_auditor": "user_auditor",
+        "compaction":"compaction",
         "end": END
     }
 )
@@ -284,10 +288,10 @@ workflow.add_conditional_edges(
 
 
 workflow.add_conditional_edges(
-    "compaction_node",
-    route_after_compaction,
+    "compaction",
+    route_after_compact,
     {    
-        "extractor": "extractor",
+        "generator": "generator",
         "end": END
     }
 )

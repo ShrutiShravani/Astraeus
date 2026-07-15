@@ -31,7 +31,7 @@ def forensic_cache_key(state:AgentState):
     #combine key identifiers
     key_str = f"{state['target_company']}_{state['target_year']}_{state['query']}"
     return hashlib.md5(key_str.lower().strip().encode()).hexdigest()
-"""
+
 
 def pre_filtering(initial_chunks, planner_tasks):
     scored_chunks = []
@@ -90,7 +90,7 @@ def pre_filtering(initial_chunks, planner_tasks):
     # Return the best 4. Even if none hit the '100' threshold, 
     # it still returns the 4 'best available' to prevent zero-chunk errors.
     return [item[1] for item in scored_chunks[:4]]
-
+"""
 def hybrid_retriever_node(state: AgentState):
     start_ts = time.time()
     query = state["query"]
@@ -161,8 +161,8 @@ def hybrid_retriever_node(state: AgentState):
         search_result = client.query_points(
             collection_name="financial_reports",
             prefetch=[
-                models.Prefetch(query=dense_vector, using="dense", limit=50),
-                models.Prefetch(query=sparse_vector, using="sparse", limit=50)
+                models.Prefetch(query=dense_vector, using="dense", limit=150),
+                models.Prefetch(query=sparse_vector, using="sparse", limit=150)
             ],
             query=models.FusionQuery(fusion=models.Fusion.RRF),
             query_filter=models.Filter(must=filter_conditions)
@@ -245,12 +245,23 @@ def hybrid_retriever_node(state: AgentState):
         "page": chunk["page"],
         "evidence":chunk["text"]
     }  
-
-
-    initial_contexts.append(entry)
-    print(f"length of initial_contexts:{len(initial_contexts)}")
+        final_contexts.append(entry)
+        print(f"length of initial_contexts:{len(final_contexts)}")
     
-    final_contexts = pre_filtering(initial_contexts, plan)
+    #final_contexts = pre_filtering(initial_contexts, plan)
+    print(f"[DEBUG] final_cotnexts_count:{len(final_contexts)}")
+    print(f"[DEBUG] {[c['source']for c in final_contexts]}")
+    print(f"[RETRIEVAL DEBUG] Sources: {[(c['source'], c['year'], c['page']) for c in final_contexts]}")
+
+    tenk_chunks = [c for c in final_contexts if c['source'] == '10K']
+    transcript_chunks = [c for c in final_contexts if c['source'] == 'Transcript']
+
+    for i, ctx in enumerate(final_contexts):
+        print(f"\n[CHUNK {i}]")
+        print(f"  Source: {ctx['source']} | Year: {ctx['year']} | Page: {ctx['page']}")
+        # Show first 200 chars — does it contain the metric?
+        print(f"  Content preview: {ctx['evidence'][200:400]}")
+        print(f"{'='*50}\n")
 
  
     node_latency = time.time() - start_ts

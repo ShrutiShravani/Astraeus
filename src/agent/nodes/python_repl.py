@@ -1,4 +1,4 @@
-from src.agent.state import AgentState
+from src.agent.state import AgentState, EvidenceFound
 import time
 from src.utils.monitoring import log_to_mlflow
 from custom_logging import logger
@@ -30,9 +30,12 @@ def python_repl_node(state:AgentState):
         calc_value= safe_vars.get("result","Calculation error:varibale not set")
         if calc_value is None:
             calc_value = "Calculation error: 'result' variable was not assigned in the formula."
+
+        
         
         print(f"python_formula:{plan.python_formula}")
-        
+    
+    
         node_latency= time.time()-start_ts
         node_metrics["node_benchmarks"]["python_repl"]["latency"] = round(node_latency, 3)
         node_metrics["prompt_version"] = "v1.1.0"

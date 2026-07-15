@@ -90,6 +90,7 @@ def validate_text_output(text, tables):
     """Returns structurally valid parsing states."""
     has_text = len(text.strip()) > 10
     has_tables = bool(tables)
+    
     is_empty = not has_text and not has_tables
     
     return {
@@ -222,12 +223,16 @@ def process_page_in_process(task, attempt):
     try:
         doc = fitz.open(stream=single_page_bytes, filetype="pdf")
         f_page = doc[0]
+       
 
         with pdfplumber.open(io.BytesIO(single_page_bytes)) as plumber_doc:
             p_page = plumber_doc.pages[0]
             tables = p_page.find_tables() or []
 
         text = f_page.get_text("text") or ""
+        print(len(text.split()))
+        word_count = len(text.split())
+        result["text_words"] = word_count
         validation = validate_text_output(text, tables)
 
         if not validation["valid"]:
@@ -331,7 +336,8 @@ def pipeline_runner_high_throughput(pdf_paths: list[Path], max_workers=4):
                     executor.submit(process_page_in_process, task, attempt): task 
                     for task in current_tasks_to_run
                 }
-                
+                max_words=max(result.values(),key=lambda x:x["text_words"])
+                print(f"max_words {max_words}")
                 # Dynamic container for holding fresh transient failures inside this tier
                 next_failed_tasks = []
 

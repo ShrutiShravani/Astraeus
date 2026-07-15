@@ -93,6 +93,7 @@ def math_extractor_node(state: AgentState):
 
      
     metric_summary= ", ".join([f"{m.label}:{m.value}"for m in plan_output.metrics])
+ 
     return {
         "math_plan": plan_output,
         "turn_count": current_turn,

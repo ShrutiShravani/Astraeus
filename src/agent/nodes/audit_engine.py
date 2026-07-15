@@ -62,7 +62,7 @@ def audit_engine(state: AgentState):
         }
 
     context_str = ""
-    wiki_str = "\n".join([f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence}: {item.quote})" for item in audit_wiki])
+    wiki_str = "\n".join([f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence})" for item in audit_wiki])
     context_str = f""" ### Evidences so far (ARCHIVE)
         {wiki_archive if wiki_archive else "No historical archive yet."}
         ### ACTIVE INVESTIGATION (WIKI)

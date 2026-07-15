@@ -2,3 +2,11 @@
 null
 "No report generated yet."
 null
+"# Executive Summary\nThe analysis focuses on the percentage change in Nike's 'Cash and Equivalents' between FY2019 and FY2020. This metric is crucial for understanding the liquidity buffer Nike built during the pandemic.\n\n# Analysis\nThe cash and equivalents at the end of FY2019 were $4,466 million, and at the end of FY2020, they were $8,348 million. This indicates a significant increase in liquidity, which is essential for assessing the company's financial resilience during the pandemic.\n\n# Evidence Table\n| Fiscal Year | Source                  | Page | Year | Evidence Description                                      | Relevance                                      |\n|-------------|-------------------------|------|------|-----------------------------------------------------------|------------------------------------------------|\n| 2019        | NIKE_2019_10K_masked.md | 56   | 2019 | Cash and equivalents, end of year: $4,466 million         | Provides the cash and equivalents for FY2019   |\n| 2020        | NIKE_2020_10K_masked.md | 62   | 2020 | Cash and equivalents, end of year: $8,348 million         | Provides the cash and equivalents for FY2020   |\n\n# Math Calculation\nThe percentage change in 'Cash and Equivalents' from FY2019 to FY2020 is calculated as follows:\n\n\\[\n\\text{Percentage Change} = \\left( \\frac{\\text{Cash FY2020} - \\text{Cash FY2019}}{\\text{Cash FY2019}} \\right) \\times 100\n\\]\n\nSubstituting the values:\n\n\\[\n\\text{Percentage Change} = \\left( \\frac{8,348 - 4,466}{4,466} \\right) \\times 100 = 86.97\\%\n\\]\n\nThis calculation shows an 86.97% increase in cash and equivalents, indicating a substantial liquidity buffer built by Nike during the pandemic."
+null
+null
+null
+null
+null
+null
+null

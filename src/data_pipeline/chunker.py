@@ -205,7 +205,7 @@ def process_and_upload(md_files: list[Path]):
     print("Ingestion Complete: All files processed exactly once.")
 
 def robust_metadata_extractor(filename):
-    """Senior Logic: Extracts metadata regardless of filename structure."""
+     #Logic: Extracts metadata regardless of filename structure
     clean_name = filename.replace(".md", "").upper()
     year_match = re.search(r'(19|20)\d{2}', clean_name)
     if not year_match:

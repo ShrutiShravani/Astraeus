@@ -71,8 +71,8 @@ async def retrieval_auditor_node(state:AgentState):
     planner_tasks= "\n".join([f"Task{i+1} {t.title} | Source: {t.doc_source}" for i, t in enumerate(plan)]) 
     
     print(f"Debug-----Stratign compresstion {time.time()}")
-    compressed_evidence= await query_aware_compression(context,current_query)
-    print(f"compressed_evidence_summary:{compressed_evidence}")
+    #compressed_evidence= await query_aware_compression(context,current_query)
+    #print(f"compressed_evidence_summary:{compressed_evidence}")
 
     try:
         node_config = promptloader.prompts.get('retriever_auditor', {})
@@ -90,7 +90,7 @@ async def retrieval_auditor_node(state:AgentState):
 
     prompt = raw_template.format(
         planner_tasks=planner_tasks, 
-        context=compressed_evidence,
+        context=context,
     )
     print(f"!!! DISPATCHING: {planner_tasks.title}")
   
@@ -114,15 +114,25 @@ async def retrieval_auditor_node(state:AgentState):
     evidence_found = [] 
     output = response["parsed"]
 
+    print(f"\n[AUDITOR DEBUG] needs_revision: {output.needs_revision}")
+    print(f"[AUDITOR DEBUG] Evidence found count: {len(output.found_evidence)}")
+
+    for item in output.found_evidence:
+        print(f"  Task: {item.task_name}")
+        print(f"  Status: {item.status}")
+        print(f"  Evidence: {item.evidence}")
+ 
+    
+
     found_evidence_list = output.found_evidence
 
     for item in found_evidence_list:
         item.status=item.status.lower()
         if item.status!="missing":
-            print(f"Verified:{item.task_name} | {item.company} | {item.year} | {item.evidence} in {item.source} p.{item.page} {item.quote}")
+            print(f"Verified:{item.task_name} | {item.company} | {item.year} | {item.evidence} in {item.source} p.{item.page}")
             evidence_found.append(item)
     
-     
+    print(f"evdience_found:{evidence_found}")
     # 4. CAPTURE METRICS (The Senior-Level Step)
     metrics_getter = get_node_metrics(
         "retrieval_auditor",

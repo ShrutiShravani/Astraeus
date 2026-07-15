@@ -55,14 +55,16 @@ def unified_generator_node(state: AgentState):
 
     # -----------------------
   
-    wiki_str = "\n".join([f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence}: {item.quote})" for item in audit_wiki])
+    wiki_str = "\n".join([f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence})" for item in audit_wiki])
     final_context_for_llm = f""" ### HISTORICAL LEDGER (ARCHIVE)
         {wiki_archive if wiki_archive else "No historical archive yet."}
         ### ACTIVE INVESTIGATION (WIKI)
         {wiki_str if wiki_str else "No new findings this turn."}
         """
-
-
+    """
+    if len(wiki_str)>8:
+        return {"force_compact": True}
+    """
 
     planner_tasks = state.get("plan")
     active_task_list = [f"[NEW RESEARCH]: {t.title}" for t in planner_tasks]

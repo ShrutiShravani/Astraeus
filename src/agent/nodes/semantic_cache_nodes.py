@@ -11,11 +11,12 @@ embeddings = get_embeddings()
 
 def semantic_cache_check_node(state:AgentState):
     start_ts= time.time()
-    year = state.get("target_year") 
-    if isinstance(year, list):
-        year_to_use = int(year[0])
+    years = state.get("target_year") 
+    if isinstance(years, list):
+        year_to_use = sorted([int(year) for year in years])
     else:
-        year_to_use = int(year)
+        year_to_use = [(int(years))]
+   
        
     company= state.get("target_company")
     print("checking for cache")
@@ -33,15 +34,15 @@ def semantic_cache_check_node(state:AgentState):
     latency= round(time.time()-start_ts,3)
     
     where_conditions = {}
-    if company and year:
+    if company and years:
         where_conditions = {
             "$and": [
                 {"company": {"$eq": str(company).upper()}},
-                {"year": {"$eq": int(year_to_use)}}
+                {"year": {"$in": year_to_use}}
             ]
         }
      
-    print(f"year:{year}")
+    print(f"year:{year_to_use}")
     print(f"company:{company}")
  # Search for similar queries with a distance threshold (1 - distance = similarity)
     results = collection.query(
@@ -51,8 +52,13 @@ def semantic_cache_check_node(state:AgentState):
         include=["metadatas", "documents", "distances"]
     )
 
+    found_years=[]
+
+    if results and results["metadatas"][0]:
+        found_years=[m.get("year") for m in results["metadatas"][0]]
+
         
-    if results["distances"][0] and results["distances"][0][0] < 0.10:  # 95% similarity
+    if results["distances"][0] and results["distances"][0][0] < 0.10 and set(found_years)==set(year_to_use):  # 95% similarity
         cached_report = results["documents"][0][0]
         print("--- CACHE HIT: Bypassing LLM Nodes ---")
       
