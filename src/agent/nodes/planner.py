@@ -42,7 +42,7 @@ def planner_node(state:AgentState):
 
     if state.get("human_decision") == "is_investigate":
         # Keep only the relevant context
-        history = [history[-1]] if history else []  
+        history = [history] if history else []  
         planner_instruction = f"INVESTIGATE MODE:You are analyzing a thread of financial investigation.History of queries {history}.This was for {prev_company} {prev_year}."
       
     else:
@@ -64,63 +64,50 @@ def planner_node(state:AgentState):
        
         }
 
-    audit_wiki=state.get("audit_wiki","")
+    audit_wiki=state.get("audit_wiki",[])
     already_verified_facts= ",".join([f"Year: {item.year} | Company: {item.company} | Task: {item.task_name} | Evidence :{item.evidence} in {item.source} p.{item.page}"for item in audit_wiki])
     
-    if retrieved_feedback:
-        planner_instruction=f"""
-        You are operating in RECOVERY MODE. You are forbidden from performing the original audit.
-
-        ### 1. EXCLUSION LIST (ABSOLUTELY PROHIBITED)
-        The following metrics are ALREADY VERIFIED. Do NOT generate tasks for these:
-        {audit_wiki}
-
-        ### 2. YOUR ONLY OBJECTIVE (THE GAP)
-        Focus exclusively on this critique:
-        {retrieved_feedback.retriever_critique}
-
-        ### 3. STRICT CONSTRAINTS
-        - OUTPUT FORMAT: Provide ONLY tasks that address the GAP above.
-        - PROHIBITION: If a task's objective is already satisfied by the EXCLUSION LIST, you must drop that task.
-        - CALCULATION RULE: If {prev_company} {prev_year} metrics are already in the EXCLUSION LIST, you are forbidden from creating retrieval tasks for them. Assume the system will calculate them.
-        - SCOPE: Only target {prev_company} {prev_year}.
-
-        ### 4. STRATEGY ADJUSTMENT
-        - Do not repeat previous strategies. 
-        - If a source was missing, explicitly switch to the required doc_source.
-        - Change your keywords/zones based on the critique provided.
-
-        Failure to follow these constraints will result in redundant work and audit failure.
-        """
         
-    elif is_follow_up:
+    if is_follow_up:
 
         planner_instruction = f"""
         FOLLOW-UP MODE: GAP ANALYSIS
 
         CURRENT STATE:
         - Verified Facts: {already_verified_facts}
-        - Audit Wiki Evidence: {audit_wiki} 
         - User Query: {current_query}
 
         RULES:
-        
 
-        GAP ANALYSIS: Compare the 'User Query' against 'Audit Wiki' and 'Verified Facts'. A retrieval task is REQUIRED only if the specific metric, year, or entity is NOT explicitly found in the 'Audit Wiki'.
+            YOUR ONLY JOB:
+            Compare the USER QUERY against VERIFIED FACTS.
 
-        NO DUPLICATION: If the 'Audit Wiki' contains the exact year and metric, return an empty task list []. Do not re-retrieve data you already possess.
+            STEP 1 — CHECK WIKI FIRST:
+            For each metric the query needs, check if it 
+            exists in VERIFIED  FACTS with the exact 
+            company and year.
 
-        TRUST THE EVIDENCE: Do not assume information exists just because it was discussed previously; it must be in the 'Audit Wiki' or 'Verified Facts' to be considered 'known'.
+            STEP 2 — DECIDE:
+            A) If ALL needed metrics are in the verified facts:
+            → return an empty task list []. Do not re-retrieve data you already possess.
+            → This tells the system to calculate from wiki
 
-        SOURCE MAPPING: For every missing piece of information, generate a REQUIRED_FROM_SOURCE task, specifying the exact Year, Company, and Metric.
+            B) If SOME metrics are missing from verified facts:
+            → Create tasks ONLY for the missing metrics
+            → Do NOT create tasks for metrics already in verified facts
 
-        PRIORITIZATION: For comparative queries (e.g., 2019 vs 2020), identify the delta. Only generate retrieval tasks for the missing year(s).
+            C) If query asks for a ratio (margin, growth rate):
+            → Check if components are in verified facts
+            → If yes → return an empty task list[]
+            → If no → create tasks for missing components only
 
-        CALCULATION OVER RETRIEVAL (The Circuit Breaker): If the User Query asks for a ratio or derived metric (e.g., Gross Margin), and the components (e.g., Gross Profit, Revenue) are present in the 'Audit Wiki', you MUST generate a task with doc_source="NONE" and zone="INTERNAL_LOGIC". FORBIDDEN: Do not create retrieval tasks for metrics that can be computed from verified facts.
+            STRICT RULE: 
+            If a metric + year + company combination exists 
+            in VERIFIED FACTS, you are FORBIDDEN from 
+            creating a retrieval task for it. Violation = 
+            wasted compute and audit failure.
+            """
 
-        COMPONENT-DRIVEN SEARCH: If a ratio is requested and its components are MISSING from the 'Audit Wiki', generate retrieval tasks for the individual components first. Do not generate a retrieval task for the parent ratio.
-
-        """
     else:
         planner_instruction=f"Analyze the user query,classify a financial query type and  build a comprehensive step by step task plan."
         
@@ -172,7 +159,7 @@ def planner_node(state:AgentState):
         }
 
     #JOIN ALL TASKS 
-    task_rationales="|".join([t.rationale for t in plan_output.tasks])
+    
     all_extracted_year=list(set([t.extracted_year for t in plan_output.tasks]))
     all_extracted_company=list(set([t.extracted_company for t in plan_output.tasks]))
     node_results = metrics_getter(state)
@@ -189,13 +176,11 @@ def planner_node(state:AgentState):
     return {
         "plan": plan_output.tasks,
         "turn_count": current_turn,
-
         **node_results,
         "type": plan_output.type,
         "target_company": all_extracted_company, # Ensure this isn't None!
         "target_year":  all_extracted_year,
-        "steps": ["Created search plan for query: " + state["query"],f"query_type:{plan_output.type}",f"Audit Strategy: {plan_output.reasoning}", 
-            f"Task Logic: {task_rationales}"]
+        "steps": ["Created search plan for query: " + state["query"],f"query_type:{plan_output.type}"]
     }
 
 

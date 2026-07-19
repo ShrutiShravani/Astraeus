@@ -49,6 +49,8 @@ def audit_engine(state: AgentState):
     generated_report= state.get("generation")
     wiki_archive = state.get("wiki_archive", "")
     audit_wiki= state.get("audit_wiki","")
+    is_follow_up = state.get("is_follow_up", False)
+    query_history= state.get("query_history")
 
     try:
         node_config = promptloader.prompts.get('audit_engine', {})
@@ -73,18 +75,20 @@ def audit_engine(state: AgentState):
     math_val = state.get('calculation_result')
     math_info = f"CALCULATED_MATH: {math_val}" if math_val is not None else "CALCULATED_MATH: N/A"
     
-    has_history = bool(wiki_archive and wiki_archive.strip())
-
+  
     mode_instruction = f"""
-    ### MODE: {"CONTINUOUS AUDIT" if has_history else "INITIAL AUDIT"}
-    - Status: {"This is a follow-up turn. You must integrate findings from the ARCHIVE with new evidence." if has_history else "This is the first turn."}
-    - Audit the report ONLY against the CURRENT QUERY: "{current_query}".
-    - Evidence Rules: Every fact in the report MUST be supported by either the ARCHIVE or the ACTIVE INVESTIGATION (WIKI).
-    - Hallucination Policy: Any claim not found in the ARCHIVE or WIKI is a hallucination.
-    - The report must materially answer the CURRENT QUERY.
+    ### MODE:
+    - Status: {"Follow-up turn" if is_follow_up else "Fresh audit"}
+    - Current Query: {current_query}
+    - Query History: {query_history if is_follow_up else "N/A"}
+    - Evidence Rules: Every fact in the report MUST be 
+    supported by either ARCHIVE or WIKI.
+    - Hallucination Policy: Any claim not found in 
+    ARCHIVE or WIKI is a hallucination.
+    - The report must materially answer: {current_query}
     """
+   
     
-
 
     # ADVANCED PROMPT: Separates Data Validation from Writing Validation
     audit_prompt = raw_template.format(
@@ -95,6 +99,7 @@ def audit_engine(state: AgentState):
         context_str=context_str,
         generated_report=generated_report,
         current_query=current_query,
+        query_history= query_history[-1] if query_history else "No prior context"
    
     )
 
@@ -124,8 +129,7 @@ def audit_engine(state: AgentState):
     scores={
     "math_score":output.math_score,
     "traceability_score":output.traceability_score,
-    "hallucination_score":output.hallucination_score,
-    "divergence_score":output.divergence_score
+    "hallucination_score":output.hallucination_score
     }
 
     current_run_id = monitoring.ACTIVE_AUDIT_RUN_ID
@@ -165,27 +169,15 @@ def audit_engine(state: AgentState):
     is_factually_safe:bool= output.hallucination_score>=4
     is_math_accurate:bool = output.math_score>=4
     is_traceable_enough:bool = output.traceability_score>=3
-    is_divergence:bool =output.divergence_score>=4
 
 
-    
-    if query_type=="C":
-        if all([is_factually_safe,is_math_accurate,is_traceable_enough,is_divergence]):
-            needs_revision=False
-            target_node = "human_review"
-            audit_status = "PASSED"
-        
-        else:
-            needs_revision=True
-            target_node="generator"
+    if all([is_factually_safe, is_math_accurate, is_traceable_enough]):
+        needs_revision = False
+        target_node = "human_review"
+        audit_status = "PASSED"
     else:
-        if all([is_factually_safe, is_math_accurate, is_traceable_enough]):
-            needs_revision = False
-            target_node = "human_review"
-            audit_status = "PASSED"
-        else:
-            needs_revision=True
-            target_node="generator"
+        needs_revision=True
+        target_node="generator"
 
     
     if needs_revision:

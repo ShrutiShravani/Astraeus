@@ -36,21 +36,20 @@ async def query_aware_compression(context,query):
     """
 
     compression_prompt = f"""
-   ### MISSION
-    You are a High-Density Forensic Data Compressor. Your goal is to strip away prose and fluff while preserving 100% of the factual, numerical, and evidentiary value of the provided context.
+    ### MISSION
+        You are a High-Density Forensic Data Compressor. Your goal is to strip away prose and fluff while preserving 100% of the factual, numerical, and evidentiary value of the provided context.
 
-    ### RULES
-    1. **NO FILTERING:** Do not decide what is relevant to the query. Keep ALL raw data, metrics, years, and financial figures found in the context.
-    2. **FORMATTING:** Use bullet points for high-density facts. 
-    3. **LEGAL/AUDIT INTEGRITY:** Maintain all Source and Page references for every fact.
-    4. **DELETE:** Remove introductory sentences ("The document states..."), transition phrases, and marketing adjectives.
-    5. **PRESERVE:** Keep all explanations of accounting methods or 'notes to financial statements'.
+        ### RULES
+        1. **NO FILTERING:** Do not decide what is relevant to the query. Keep ALL raw data, metrics, years, and financial figures found in the context.
+        2. **FORMATTING:** Use bullet points for high-density facts. 
+        3. **LEGAL/AUDIT INTEGRITY:** Maintain all Source and Page references for every fact.
+        4. **PRESERVE:** Keep all explanations of accounting methods or 'notes to financial statements' .
 
-    [QUERY]: {query}
-    [CONTEXT]: {context}
+        [QUERY]: {query}
+        [CONTEXT]: {context}
 
-    Output the compressed, high-density evidence blocks below:
-    """
+        Output the compressed, high-density evidence blocks below:
+        """
 
     response =  await llm_pro.ainvoke(compression_prompt)
     return response.content
@@ -58,7 +57,6 @@ async def query_aware_compression(context,query):
 async def retrieval_auditor_node(state:AgentState):
     #remove config: RunnableConfig from args above
     start_ts=time.time()
-    current_query = state["query"]
     current_turn = state.get("turn_count", 0) + 1
     structured_llm =  resilient_pro.with_structured_output(Retriever_feedback,include_raw=True)
     context= state.get("context")
@@ -68,7 +66,7 @@ async def retrieval_auditor_node(state:AgentState):
   
     plan = state.get("plan", [])
     
-    planner_tasks= "\n".join([f"Task{i+1} {t.title} | Source: {t.doc_source}" for i, t in enumerate(plan)]) 
+    planner_tasks= "\n".join([f"TASK_TITLE:{t.title} | Source: {t.doc_source}" for i, t in enumerate(plan)]) 
     
     print(f"Debug-----Stratign compresstion {time.time()}")
     #compressed_evidence= await query_aware_compression(context,current_query)
@@ -117,20 +115,23 @@ async def retrieval_auditor_node(state:AgentState):
     print(f"\n[AUDITOR DEBUG] needs_revision: {output.needs_revision}")
     print(f"[AUDITOR DEBUG] Evidence found count: {len(output.found_evidence)}")
 
-    for item in output.found_evidence:
-        print(f"  Task: {item.task_name}")
-        print(f"  Status: {item.status}")
-        print(f"  Evidence: {item.evidence}")
- 
-    
+  
 
     found_evidence_list = output.found_evidence
+    missin_task=[]
 
     for item in found_evidence_list:
+        print(f"Verified:{item.task_name} | {item.company} | {item.year} | {item.evidence} in {item.source} p.{item.page}")
+        evidence_found.append(item)
+    
+    for item in found_evidence_list:
         item.status=item.status.lower()
-        if item.status!="missing":
-            print(f"Verified:{item.task_name} | {item.company} | {item.year} | {item.evidence} in {item.source} p.{item.page}")
-            evidence_found.append(item)
+        if item.status=="missing":
+            missin_task.append(item.task_name)
+    
+    failed_tasks=[task for task in plan if task.title in missin_task]
+    if failed_tasks:
+        print(f"missing task:{failed_tasks}")
     
     print(f"evdience_found:{evidence_found}")
     # 4. CAPTURE METRICS (The Senior-Level Step)
@@ -164,6 +165,7 @@ async def retrieval_auditor_node(state:AgentState):
     return{
         "turn_count": current_turn,
         "audit_wiki":evidence_found,
+        "failed_tasks":failed_tasks,
         **node_results,
         "retriever_feedback": output,
         "retriever_audit_attempts": current_attempts,

@@ -18,7 +18,7 @@ def mock_state():
 def test_prompt_purifier_node_success(mock_log, mock_loader, mock_llm, mock_state):
     # 1. Setup mocks
     mock_loader.prompts.get.return_value = {
-        'query_purifier_prompt': "History: {history}, Query: {current_query}, Facts: {already_verified_facts}",
+        'query_purifier_prompt': "History: {history}, Query: {current_query}",
         'version': '1.0.0'
     }
     

@@ -24,7 +24,7 @@ class SecurityRating(BaseModel):
 class EvidenceFound(BaseModel):
     task_name: str = Field(description="The specific task or metric from the Planner (e.g., '2019 COGS')")
     evidence: str = Field(description="The exact value found (e.g. $5,622M)")
-    status: str = Field(description="FOUND, MISSING, or MISMATCHED")
+    status: str = Field(description="FOUND or MISSING")
     company:str= Field(description="Company")
     year:int= Field(description="Year")
     source: str = Field(description="Filename/Snippet ID of the source")
@@ -32,11 +32,10 @@ class EvidenceFound(BaseModel):
    
   
 class Retriever_feedback(BaseModel):
-    needs_revision:bool= Field(description="STRICT: Set to False if all raw numbers (e.g. COGS, Inventory) are present. Set to True ONLY if a document or year is missing.")
-    retriever_critique:str= Field(description="Detailed explanation of hallucinations or missing info")
+    needs_revision:bool= Field(description="Simple rule: FALSE = all tasks in found_evidence have status FOUND or TRUE = at least one task has status MISSING. No other logic applies.")
+    retriever_critique:str= Field(description="MUST contain ALL planner tasks — both FOUND and MISSING. Missing tasks have status=MISSING,source=NOT_IN_CONTEXT, page=N/A,evidence=NOT FOUND IN CONTEXT")
     found_evidence: List[EvidenceFound] = Field(description="List of all verified data points found in context")
-    no_evidence_found:bool= Field(description="True if no evidence was found for the task")
-    no_evidence_found_reason:str= Field(description="Reason for no evidence found")
+    
     
 class Reflection(BaseModel):
     decision:str=Field(description="Accept or reject the report")
@@ -155,7 +154,7 @@ class FinalGeneration(BaseModel):
 
 
 class PurifierOutput(BaseModel):
-    action: Literal["rewrite", "clarify"]
+    action: Literal["rewrite", "clarify","pass"]
     rewritten_query: str = Field(description="The disambiguated, self-contained user query.")
     clarification_question: Optional[str] = Field(default=None, description="The question to ask if action is 'clarify'.")
     
@@ -198,6 +197,7 @@ class AgentState(TypedDict):
     math_plan: Optional[MathPlan]=None
     generation:str
     response:str
+    failed_tasks:List[Task]
     is_safe:bool
     audit_status:str
     audit_attempts:int

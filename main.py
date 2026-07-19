@@ -39,7 +39,7 @@ async def run_nike_audit():
     # 1. DEFINE YOUR QUERIES (Until you have a file, define them here)
     nike_queries = [
         #{"type":"C","year":2022,"q": "In the 2022 Earnings Transcripts, management claims that 'consumer demand remains at an all-time high.' Verify this claim by cross-referencing the 10-K 'Inventory' growth and the 'Gross Margin' explanation. Does the 10-K suggest this demand was organic, or was it driven by aggressive promotions and inventory liquidation?"},
-        {"q":" Calculate Nike's Gross Margin for 2022 and 2021"}
+        {"q":"Calculate gross margin for 2020 and 2021"}
         #{"q": "How did Nike's 'Direct-to-Consumer' (DTC) strategy shift in response to global store closures in 2020 according to the 10-K Risk Factors?"}
     ]
 
@@ -93,17 +93,21 @@ async def run_nike_audit():
                                 if state.values.get("ask_user"):
                                     print("\nClarification Required")
                                     print(state.values.get("clarification_question"))
-                                    question= state.values.get("clarification_question")
-                                    clarification= await async_input("")
+            
+                                    clarification= await async_input(" ")
 
-                                    await app.update_state(config,{
+                                    new_session_id = f"nike_audit_{uuid.uuid4().hex[:8]}"
+                                    new_config = {"configurable": {"thread_id": new_session_id}}
+
+                                    await app.invoke(config,{
                                         "query":clarification,
                                         "query_history":[clarification],
                                         "ask_user":False
-                                    },as_node="human_wait")
-        
-                                    await app.ainvoke(None,config)
-                                    continue
+                                    },new_config)
+                                    
+
+                                    config= new_config
+                                   
                                 
                             
                             if "human_review" in state.next:
@@ -134,6 +138,7 @@ async def run_nike_audit():
                                         "generation": manual_text, 
                                         "human_decision": "pass", # Set to pass so it goes straight to the User
                                         "audit_status": "VERIFIED (MANUAL CORRECTION)",
+                                        "ask_user":False
                                     }, as_node="human_review")
                                     
                                     print("State updated. Displaying corrected report to User...")
@@ -143,6 +148,10 @@ async def run_nike_audit():
                                     
 
                             state = await app.aget_state(config) 
+                            print(f"[DEBUG] state.next: {state.next}")
+                            print(f"[DEBUG] ask_user: {state.values.get('ask_user')}")
+                            print(f"[DEBUG] clarification_question: {state.values.get('clarification_question')}")
+                            print(f"[DEBUG] interrupt_before hits: {state.tasks}")
                                 
                                 # The loop continues and will hit the human_review breakpoint again
                                 # If there's no 'next' node, it means the graph finished (Scenario 1 or 2)
@@ -222,14 +231,22 @@ async def run_nike_audit():
 
                 # Only evaluate reports we actually approved
                 used_snippets =  final_state.values.get("audit_wiki", [])
-                formatted_contexts = [c.get("evidence", "") for c in used_snippets]
-            
+                formatted_contexts=[]
+                for c in used_snippets:
+                    if hasattr(c,"evidence"):
+                        formatted_contexts.append(c.evidence)
+                    elif isinstance(c, dict):
+                        # Dict fallback
+                        formatted_contexts.append(c.get("evidence", ""))
+                
+                formatted_contexts=[ctx for ctx in formatted_contexts if ctx]
+
                 raw_history = final_state.values.get("query")
                 # This represents the 'Total Question' the AI had to answer
                 full_question_context = " | ".join(raw_history) if isinstance(raw_history, list) else str(raw_history)
             
                 results_for_ragas.append({
-                    "question": raw_history,
+                    "question": full_question_context,
                     "answer": final_state.values.get("generation"),
                     "contexts": formatted_contexts
                 })

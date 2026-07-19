@@ -39,6 +39,7 @@ def unified_generator_node(state: AgentState):
     current_turn = state.get("turn_count", 0) + 1
     previous_draft = state.get("generation","")
     query_type = state.get("type") 
+    query_history= state.get("query_history")
     math_result = state.get("calculation_result") 
     feedback = state.get("reflection_feedback")
     is_follow_up = state.get("is_follow_up", False)
@@ -52,30 +53,39 @@ def unified_generator_node(state: AgentState):
     max_retries=2
     attempts=0
 
-
+    missing_entries=[]
+    missing_tasks = []
+    found_entries=[]
     # -----------------------
-  
-    wiki_str = "\n".join([f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence})" for item in audit_wiki])
-    final_context_for_llm = f""" ### HISTORICAL LEDGER (ARCHIVE)
-        {wiki_archive if wiki_archive else "No historical archive yet."}
-        ### ACTIVE INVESTIGATION (WIKI)
-        {wiki_str if wiki_str else "No new findings this turn."}
-        """
-    """
-    if len(wiki_str)>8:
-        return {"force_compact": True}
-    """
-
-    planner_tasks = state.get("plan")
-    active_task_list = [f"[NEW RESEARCH]: {t.title}" for t in planner_tasks]
-    if is_follow_up:
-        if not active_task_list:
-        # Scenario: Total Wiki Match
-         active_task_list = [f"[WIKI SYNTHESIS]: Answer '{state['query']}' ONLY using Verified FINANCIAL Data and PREVIOUS NARRTAIVE EVIDENCE"]
+    for item in audit_wiki:
+        entry = (f"---[COORD:  Company: {item.company} | Year: {item.year} | Source: {item.source} | PAGE: {item.page}] ---\nVERIFIED METRIC: {item.evidence})")
+        if item.status.lower() == "missing":
+           if item.status.lower() == "missing":
+             missing_entries.append(entry)
+             missing_tasks.append(item.task_name)
         else:
-        # Scenario: Hybrid (Some New, Some Wiki)
-        # We add a virtual task to remind the LLM to integrate existing facts
-         active_task_list.append(f"[INTEGRATION]: Reconcile the new findings with existing metrics in the VERIFIED FINANCIAL DATA and and PREVIOUS NARRTAIVE EVIDENCE")
+             found_entries.append(entry)
+
+    wiki_str = "\n".join(found_entries)
+
+    final_context_for_llm = f""" ### HISTORICAL LEDGER (ARCHIVE)
+    {wiki_archive if wiki_archive else "No historical archive yet."}
+    ### ACTIVE INVESTIGATION (WIKI)
+    {wiki_str if wiki_str else "No new findings this turn."}
+    """
+    
+    missing_warning = ""
+    if missing_tasks:
+        missing_warning = f"""
+        ⚠️ DATA GAPS — THE FOLLOWING task from [planner_task] COULD NOT BE RETRIEVED:
+        {chr(10).join(f'- {t}' for t in missing_tasks)}
+        
+        STRICT RULE: Do NOT fabricate or estimate values 
+        for these items. Instead write:
+        "DATA NOT AVAILABLE: [task name] could not be 
+        verified from source documents."
+        """
+    planner_tasks = state.get("plan")
     
     try:
         node_config = promptloader.prompts.get('unified_generator', {})
@@ -101,11 +111,9 @@ def unified_generator_node(state: AgentState):
             ### FOLLOW-UP INVESTIGATION PROTOCOL (TURN 2+):
             You are now in a multi-turn audit. The context includes previous findings.
             
-            1. **SKEPTICAL MATCHING**: If the query refers to a metric in [VERIFIED FINANCIAL DATA], PRIORITIZE and use that value. 
-            2. **EVIDENCE LINKING**: For any verified fact, scan [PREVIOUS NARRATIVE EVIDENCE] for justification.
-            3. **TASK DIFFERENTIATION**: 
-            - If an 'Active Task' exists in the plan for a metric, prioritize [NEW INVESTIGATION FINDINGS].
-            - If NO 'Active Task' exists in the plan for a metric  but the user asks about the metric, use [VERIFIED FINANCIAL DATA][PREVIOUS NARRATIVE EVIDENCE].
+            **TASK DIFFERENTIATION**: 
+            - If no [planner_tasks] exists , use [query_history] to understand user query  and answer using [final_context_str].
+            - If there are active task exists in the [planner_tasks]  ,use both [query_history] and [planner_tasks] to understand user query and then answer using [final_context_str] .
             
         """
 
@@ -146,16 +154,14 @@ def unified_generator_node(state: AgentState):
     5. SURGICAL EXTRACTION: Extract ONLY the sentences that directly answer the query. Discard "fluff" or unrelated content from the same page.
     6. MULTI-YEAR ISOLATION: For multi-year queries, perform SEPARATE math for EACH year. Do not aggregate. Show raw numbers for each specific year's calculation.
     7. SOURCE DUALITY (Type B/C): You MUST include evidence from BOTH the 10-K and the Transcript if both are provided.
-    8. NARRATIVE SYNTHESIS (Type B): If multiple sources exist, compare them. If one source exists, perform a deep-dive on that specific explanation.
-    9. ZERO-ROUNDING POLICY: Preserve every decimal point. If the evidence says '$4,520,311.42', you write '$4,520,311.42'. Do not use 'M' or 'B' unless the raw text does.
-    10."SYSTEM ALERT: The final_context_str provided is the ONLY existence of reality. If final_context_str is empty or missing a specific metric, you MUST output 'DATA_NOT_FOUND' for that metric. DO NOT generate a table based on previous knowledge. If you mention a number not in the context, the audit will fail and the system will shut down."
+    8. ZERO-ROUNDING POLICY: Preserve every decimal point. If the evidence says '$4,520,311.42', you write '$4,520,311.42'. Do not use 'M' or 'B' unless the raw text does.
+    9."SYSTEM ALERT: The [final_context_str] provided is the ONLY existence of reality. If final_context_str is empty or missing a specific metric, you MUST output 'DATA_NOT_FOUND' for that metric. DO NOT generate a table based on previous knowledge. If you mention a number not in the context, the audit will fail and the system will shut down."
     """
     
    
     mode_instruction = f"""
     ### FINAL PUBLICATION MODE:
     {filter_rule}
-    - Remove all internal critiques or drafting notes.
     - **STRICT PROFESSIONALISM**: Refine the report to be accurate, senior-level, and professional.
     - **TOKEN EFFICIENCY**: Be extremely precise and on-point. 
     - **PRECISION**: Eliminate all unnecessary 'fluff', introductory filler, or redundant explanations. 
@@ -172,6 +178,7 @@ def unified_generator_node(state: AgentState):
     # Fix: Cleaned up the double prompt nesting and clarified Type C instruction
     system_prompt = raw_template.format(
         planner_tasks=planner_tasks,
+        query_history= query_history if query_history else "No prior context",
         revision_instruction=revision_instruction,
         follow_up_instruction=follow_up_instruction,
         mode_instruction=mode_instruction,
@@ -182,7 +189,8 @@ def unified_generator_node(state: AgentState):
         narrative_conflict_score =narrative_conlfict_score,
         divergence_type= divergence_type,
         divergence_reason = divergence_reason,
-        conflict_rationale = conflict_rationale
+        conflict_rationale = conflict_rationale,
+        missing_warning= missing_warning if missing_warning else "N/A"
 
       
     )

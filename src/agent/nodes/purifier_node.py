@@ -32,8 +32,7 @@ def prompt_purifier_node(state:AgentState):
     current_query = state["query"]
     current_turn = state.get("turn_count", 0) + 1
     history = state.get("query_history", [])
-    audit_wiki=state.get("audit_wiki","")
-    already_verified_facts= ",".join([f"Year: {item.year} | Company: {item.company} | Task: {item.task_name} | Evidence :{item.evidence} in {item.source} p.{item.page} {item.quote}"for item in audit_wiki])
+   
     print("loading prompt")
     try:
         node_config = promptloader.prompts.get('query_purifier', {})
@@ -54,9 +53,8 @@ def prompt_purifier_node(state:AgentState):
     structured_purifier = resilient_brain.with_structured_output(PurifierOutput,include_raw=True)
 
     purifier_prompt  = raw_template.format(
-        history=history,
-        current_query=current_query,
-        already_verified_facts=already_verified_facts # <--- THIS IS THE "FACT BRIDGE"
+        history=history[-1] if history else "No prior context",
+        current_query=current_query
 
         )
     
@@ -96,8 +94,14 @@ def prompt_purifier_node(state:AgentState):
         "steps": ["Clarifictaion required for query: " + state["query"],f"clarifictaion_question:{result.clarification_question}"]}
     
     # Otherwise, return the rewritten query
-    return {"query": result.rewritten_query, 
-    "turn_count": current_turn,
+    elif result.action=="rewritten_query":
+        return {"query": result.rewritten_query, 
+        "turn_count": current_turn,
 
-        **node_results,
-        "steps": ["Rewriting original query : " + state["query"],f"new_query:{result.rewritten_query}"]}
+            **node_results,
+            "steps": ["Rewriting original query : " + state["query"],f"new_query:{result.rewritten_query}"]}
+    else:
+        return {"query": current_query, 
+              "turn_count": current_turn,
+            **node_results,
+            "steps": ["Using original query : " + state["query"]]}

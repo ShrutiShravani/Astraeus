@@ -72,7 +72,7 @@ def test_planner_fresh_audit(mock_prompt_loader,mock_llm,base_state):
 @patch("src.agent.nodes.planner.llm_mini")
 @patch("src.agent.nodes.planner.resilient_brain")
 
-def test_planner_follow_up_purification(mock_llm_main,mock_llm_mini,mock_prefiltering,base_state):
+def test_planner_follow_up_purification(mock_llm_main,mock_llm_mini,base_state):
     base_state["is_follow_up"]=True
     base_state["audit_wiki"]=[
         MockWikiEntry("2022", "Nike", "Revenue", "46B", "10-K", "5", "Revenue was 46B")

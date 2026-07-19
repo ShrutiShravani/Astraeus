@@ -94,7 +94,9 @@ def pre_filtering(initial_chunks, planner_tasks):
 def hybrid_retriever_node(state: AgentState):
     start_ts = time.time()
     query = state["query"]
-    plan = state.get("plan", [])
+    failed_tasks = state.get("failed_tasks", [])
+    print("rotuihn  retrierv")
+    plan = failed_tasks if failed_tasks else state.get("plan", [])
     current_turn = state.get("turn_count", 0) + 1
     target_company = str(state.get("target_company", "")).upper()
     target_year = state.get("target_year")
@@ -253,8 +255,6 @@ def hybrid_retriever_node(state: AgentState):
     print(f"[DEBUG] {[c['source']for c in final_contexts]}")
     print(f"[RETRIEVAL DEBUG] Sources: {[(c['source'], c['year'], c['page']) for c in final_contexts]}")
 
-    tenk_chunks = [c for c in final_contexts if c['source'] == '10K']
-    transcript_chunks = [c for c in final_contexts if c['source'] == 'Transcript']
 
     for i, ctx in enumerate(final_contexts):
         print(f"\n[CHUNK {i}]")

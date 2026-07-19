@@ -68,6 +68,7 @@ def route_after_prompt_purifier(state):
 
 def route_after_retriever_auditor(state: AgentState):
     # This is where the decision happens!
+    failed_tasks = state.get("failed_tasks", [])
     feedback= state.get("retriever_feedback")
     attempts = state.get("retriever_audit_attempts", 0)
     needs_revision = feedback.needs_revision
@@ -75,11 +76,11 @@ def route_after_retriever_auditor(state: AgentState):
     if state.get("retriever_auditor_failed"):
         return "end"
   
-    elif needs_revision:
-        if attempts>3 and feedback.no_evidence_found:
-            return "human_review"
-        print(f"--- RETRIEVER REJECTED (Attempt {attempts}): LOOPING TO PLANNER ---")
-        return "planner"
+    if needs_revision:
+        if attempts > 3:
+            return "human_review"  # max attempts reached
+        if failed_tasks:
+            return "retriever"     # retry with failed tasks
         
     return "extractor"
 
@@ -155,7 +156,7 @@ workflow.add_node("cache_add",finalize_audit)
 workflow.add_node("user_auditor",auditor_node)
 workflow.add_node("human_wait",user_node)
 
-workflow.add_edge("human_wait", "prompt_purifier")
+workflow.add_edge("human_wait", "guard")
 
 workflow.add_edge("planner", "cache_check")
 
@@ -205,6 +206,7 @@ workflow.add_conditional_edges(
     {    
         "prompt_purifier": "prompt_purifier",
         "planner":"planner",
+        "human_wait": "human_wait",
         "end":END
     }
 )
@@ -278,10 +280,9 @@ workflow.add_conditional_edges(
     "retriever_auditor", 
     route_after_retriever_auditor,
     {
-        "generator": "generator",
         "human_review": "human_review",
         "extractor": "extractor",
-        "planner":"planner",
+        "retriever":"retriever",
         "end": END
     }
 )
@@ -289,7 +290,7 @@ workflow.add_conditional_edges(
 
 workflow.add_conditional_edges(
     "compaction",
-    route_after_compact,
+    route_after_compaction,
     {    
         "generator": "generator",
         "end": END

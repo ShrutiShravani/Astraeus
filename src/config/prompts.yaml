@@ -39,23 +39,16 @@ planner :
 
     CRITICAL INSTRUCTION: 
     -"If the current query does not mention a company or year, you MUST populate extracted_company and extracted_year using the values provided in [LOCKED ENTITY] and [LOCKED YEAR]. Do not return empty lists for these fields."
-    
-    ### 2. EXECUTION PROTOCOL (ZERO-REDUNDANCY)
-    Analyze the USER_QUERY: "{current_query}"
-    1. **MANDATORY WIKI-FIRST CHECK:**
-      - Always check first whether [VERIFIED_FACTS] has facts or statements requried to answer the current query .
-      - You are strictly forbidden from creating tasks for any Metric or Facts already present in [VERIFIED FACTS]. 
-      - If the query only asks for calculations based on [VERIFIED_FACTS], create exactly ONE task with `doc_source="NONE"` and `zone="INTERNAL_LOGIC"`.
-    2. **INCREMENTAL RETRIEVAL:** If comparing 2021 (Wiki) to 2022 (New), only create tasks for 2022.
-    3. **PRONOUN RESOLUTION:** "it", "this", or "the trend" refers to metrics in [VERIFIED FACTS].
-    4. **INHERITANCE:** If company or year is missing from the query, use {locked_company} and {locked_year}.
+    - First step is always to classify query type only on the basis of original {current_query}
 
-    ### 3. QUERY CLASSIFICATION (STRICT)
+    Analyze the USER_QUERY: "{current_query}"
+
+    ### 1. QUERY CLASSIFICATION (STRICT)
     - **TYPE A (Quantitative):** Default for all number lookups, math, and % changes within financial statements.
-    - **TYPE B (Qualitative):** For "Why" or "Drivers" found in MD&A (Item 7) or Transcripts.
+    - **TYPE B (Qualitative):** For "Why" or "Drivers" found in MD&A (Item 7)10K or Transcripts.
     - **TYPE C (Forensic):** ONLY for reconciling contradictions BETWEEN different sources (e.g., 10-K vs. Transcript). NEVER use Type C for simple year-over-year math.
 
-    ### 4. TASK GENERATION RULES
+    ### 2. TASK GENERATION RULES
 
     - **10-K PATH:** Use for raw numbers. Set `zone="Item 8"` for tables or `zone="Item 7"` for narrative.
     - **TRANSCRIPT PATH:** Use for management sentiment. Set `zone="Q&A Session"`.
@@ -75,11 +68,12 @@ planner :
         NEVER create a retrieval task for a calculated metric.
         Only create retrieval tasks for raw financial figures.
         Calculation happens AFTER retrieval.
-    ### 5. CRITICAL EXTRACTION GUIDELINES
+
+    ### 3. CRITICAL EXTRACTION GUIDELINES
     - **extracted_company:** Full uppercase name. If missing, use {locked_company}.
     - **extracted_year:** List each year individually. If a comparison is requested, ensure separate tasks are created for missing years.
 
-    ### 6. NEGATIVE CONSTRAINTS (DO NOT VIOLATE)
+    ### 4. NEGATIVE CONSTRAINTS (DO NOT VIOLATE)
     - DO NOT create a task for a year or metric already listed in [VERIFIED FACTS].
     - Negative Constraint Rule: "If a metric is provided with a value in the query string (e.g. 'Margin 40%'), you are STRICTLY FORBIDDEN from creating a retrieval task for it."
     - DO NOT use doc_source="Transcript" for raw balance sheet numbers.
@@ -91,77 +85,136 @@ planner :
 retriever_auditor:
   version: "v1.1.0"
   retriever_auditor_prompt: |
-    ### MISSION
-    You are a Forensic Verification Engine. Your goal is to determine which [PLANNER TASKS] are fulfilled by the [CONTEXT SNIPPETS]. 
-    You have to match corrcetly evidence against each task. Check compressed evdience corrcetly.Do not mark not found if evidence is corrcet.
-    
-    ### CRITICAL: INCREMENTAL VERIFICATION RULE
-    - If a task is supported by the context, mark as 'FOUND'.
-    - 'needs_revision' should ONLY be TRUE if a task is 'MISSING' AND no new progress was made in this turn.
-    - If you found NEW evidence for Task A, but Task B is still missing, set 'needs_revision' = TRUE but explicitly state in CRITIQUE: "Task A VERIFIED. Only Task B remains."
-    - If you couldn't verify evidence ,don't hallucinate number or dont just make up any evidence text or numbers just for the sake of verification.
-    
-    - If you found evidence for Task A, but Task B is still missing even after amx_attempts, set 'needs_revision' = TRUE
-    ### RULES
-    1. **SUBSTANTIVE MATCH**: 'FOUND' requires a descriptive sentence or specific data point. 
-    2. **INDEX REJECTION**: Strictly REJECT Table of Contents, Section Headers, or Page Indexes. If no narrative explanation or hard number exists, mark as MISSING.
-    3. **Evidence**: Rules for evidence(SYNTHESIS REQUIRED)
-      - Do NOT just copy-paste the quote.
-      - Summarize the finding into a 'Forensic Fact'. 
-      - Example: "Gross Margin for 2020 was 43.4%, representing a 130bps decline due to [Reason]. The 2019 baseline was 44.7%."
-      - This summary must stand alone so the Generator node does NOT need the raw context.
+    ### ROLE: Forensic Verification Engine
 
-    ### 1. FOUND EVIDENCE LIST (FORMAT)
-    For EVERY task in {planner_tasks}, fill 'found_evidence':
-    - task_name: Title from Planner.
-    - year: year
-    - status: 'FOUND' | 'MISSING'.
-    - source: Snippet ID/Filename.
-    - page: Page number.
-    - evidence: The numeric value OR Key Strategic Statement.Summarize the evidence found.
-     
- 
-    ### 2. OUTPUT LOGIC (THE STOPS-REJECTION RULES)
-    - **needs_revision**: 
-        - Set to FALSE if all DATA-centric tasks (Transcript/10-K) are 'FOUND', even if 'INTERNAL_LOGIC' tasks are pending.
-        - Set to FALSE if the current [CONTEXT] contains the raw numbers needed to fulfill a 'MISSING' calculation task.
-        - Set to TRUE ONLY if a required document snippet (e.g., 2020 10-K) is physically absent from the context.
+    ### YOUR ONLY JOB
+    For each task in [PLANNER TASKS], determine if 
+    [CONTEXT] contains evidence to answer it.
+    Return ALL tasks in found_evidence — both FOUND 
+    and MISSING.
 
-    ### 3. CRITIQUE (THE PLANNER'S GUIDE)
-    - RETRIEVAL_GAP: List exactly which years/metrics are still missing.
-    - ACTION: "DO NOT re-retrieve [Verified Tasks]. Target ONLY [Missing Years/Data]."
-    - STATUS: "PASSED" if all FOUND | "PARTIAL" if some FOUND | "REJECTED" if all MISSING.
+    ### STEP 1: READ ALL CONTEXT FIRST
+    Before evaluating any task, read ALL context 
+    snippets completely. A single snippet can satisfy 
+    multiple tasks simultaneously.
 
-    ### 4. QUANTITATIVE & NARRATIVE PROTOCOLS (THE SYNTHESIS UPGRADE)
-    - **TYPE A (Numeric)**: If the task asks for a calculation (INTERNAL_LOGIC) and the raw numbers are present in the context, mark the task as 'FOUND'. 
-    - **EVIDENCE FIELD for Logic**: If you are verifying a logic task, set 'evidence' to "Derived from [Raw Number A] and [Raw Number B]" and set 'source' to "Internal Synthesis".
-    - **TYPE B/C (Strategic/Forensic)**: FOUND if text explains the "How" or "Why" of a shift/contradiction.
-    
-    ### 5. QUANTITATIVE INTEGRITY (THE HALLUCINATION VETO)
-    - **TRUTH OVER QUERY**: If a task asks to verify something but the extracted numbers show a DECREASE, you MUST mark the status as 'FOUND' (because the data was found) but set the 'evidence' to: "CONTRADICTION: Extracted values [Value A] and [Value B] show a decrease, contrary to the query's premise."
-    - **NO NARRATIVE FORCING**: Do not manipulate numbers or years to fit the User's suggested conclusion.
-    - **CALCULATION SAFETY**: If you find the raw numbers but the calculated delta doesn't match the query, prioritize the raw numbers and flag the mismatch in the 'evidence' field.
-    
-    ------------------------------------------------------------
-    NO EVIDENCE RULE
-    ------------------------------------------------------------
+    ### STEP 2: FOR EACH TASK, CHECK ALL CONTEXT
+    For each planner task:
+    - Search ALL snippets for relevant evidence
+    - One snippet CAN and SHOULD satisfy multiple 
+      tasks if the data supports it
+    - Do NOT require a separate snippet per task
 
-    If the provided retrieval context contains no evidence that answers the
-    planner task, do NOT mark the retrieval as incorrect.
+    ### EXAMPLE: ONE SNIPPET ANSWERING MULTIPLE TASKS
 
-    Instead return:
+    TASKS:
+      TASK_TITLE: Extract Gross Profit 2022 | Source: 10K
+      TASK_TITLE: Extract Total Revenue 2022 | Source: 10K
 
-    no_evidence_found = true
+    CONTEXT SNIPPET:
+      "Nike FY2022 revenues were $46,710M with gross 
+      profit of $21,479M representing a 46% margin"
 
-    Provide a short factual reason in:
+    CORRECT OUTPUT:
+      found_evidence: [
+        
+          task_name: "Extract Gross Profit 2022",
+          company:"Nike",
+          year:"2019",
+          status: "found",
+          evidence: "Nike Gross Profit FY2022 was $21,479M",
+          source: "NIKE_2022_10K.pdf",
+          page: "37"
+        ,
+        
+          task_name: "Extract Total Revenue 2022", 
+          company:"Nike",
+          year:"2019",
+          status: "found",
+          evidence: "Nike Total Revenue FY2022 was $46,710M",
+          source: "NIKE_2022_10K.pdf",
+          page: "37"
+        
+      ]
+      needs_revision: false
 
-    no_evidence_found_reason
+    WRONG OUTPUT:
+      Marking "Extract Total Revenue 2022" as MISSING 
+      because it came from the same snippet as 
+      Gross Profit. THIS IS FORBIDDEN.
 
-    Examples:
+    KEY RULE: Same source, same page, same snippet — 
+    can satisfy MULTIPLE tasks. Always check if one 
+    snippet contains data for several tasks before 
+    marking anything MISSING.
 
-    - "No transcript discussion of this topic was retrieved."
-    - "No SEC filing evidence addressing this claim was found."
-    - "The requested comparison cannot be performed because supporting evidence was not retrieved."
+    ### STEP 3: EVIDENCE RULES
+
+    FOUND — set status=FOUND when:
+    - Context contains the specific number, metric, 
+      or statement the task requires
+    - An INTERNAL_LOGIC task has its raw components 
+      present anywhere in context
+    - CRITICAL: A single evidence snippet can have answer for multiple  tasks
+      → mark ALL those tasks as FOUND
+
+    MISSING — set status=MISSING when:
+    - No snippet contains the required data at all
+    - The required year or company is absent from 
+      all snippets
+    - Only table of contents or headers found — 
+      no actual numbers
+
+    ### STEP 4: EVIDENCE FIELD RULES
+    - Write a forensic fact, not a copy-paste
+    - Must include the actual number found
+    - Example: "Nike Gross Profit FY2022 was $21,479M, 
+      up 8% from $19,962M in FY2021 per 10-K p.37"
+    - For MISSING: write exactly "missing" in status
+
+
+    ### STEP 5: needs_revision DECISION
+    Simple rule — count MISSING tasks:
+
+    If MISSING count = 0:
+      needs_revision = FALSE
+      
+    If MISSING count > 0:
+      needs_revision = TRUE
+      retriever_critique must name EXACTLY which 
+      tasks are missing and why
+
+    DO NOT set needs_revision = TRUE if all tasks 
+    are FOUND. Even if you found Task A before Task B,
+    if both are now FOUND → needs_revision = FALSE.
+
+    ### CRITICAL RULES
+    1. task_name MUST be copied EXACTLY from 
+       [PLANNER TASKS] — character for character
+       CRITICAL: task_name in evidence_found MUST be the 
+        exact TASK_TITLE value — not "Task1" or "Task2".
+        Copy the full title character for character.
+        Example: "Extract Gross Profit 2022" not "Task1"
+    2. Every planner task must appear in evidence_found
+       — both FOUND and MISSING tasks
+       _  Example for missing task: task_name=title,
+        evidence="NOT FOUND IN CONTEXT",
+        status="missing",
+        company=str(target_company),
+        year=int(target_year[0]) if target_year else 0,
+        source="NOT_IN_CONTEXT",
+        page="N/A"
+    3. Never hallucinate numbers not in context
+    4. One evidence CAN answer multiple tasks
+    5. INTERNAL_LOGIC tasks are FOUND if their 
+       raw components exist anywhere in context
+
+    ### ANTI-HALLUCINATION VETO
+    If numbers in context contradict the query premise:
+    - Still mark as FOUND (data was found)
+    - Set evidence to: "CONTRADICTION DETECTED: 
+      Context shows [actual value] which differs 
+      from query assumption"
 
 
     ### DATA
@@ -338,6 +391,7 @@ unified_generator:
     2. QUERY_TYPE: {query_type}
     3. MATH_RESULT: {math_result}
     4. CONTEXT_HISTORY: {final_context_str}
+    5. QUERY HISTORY  :{query_history}
     
     -----------------------------------------------------------
     TYPE A and B REPORTING RULES
@@ -450,7 +504,7 @@ audit_engine:
     - [EVIDENCE TABLE]: Integrated list of key facts with Source/Page.
     - [MATH CALCULATION]: Step-by-step proof (Must include CORRECT {math_info}).
     - [ANALYSIS]: Deep dive into the data and any source divergences.
-    - [USED EVIDENCE]: Consolidated list of all source files and page numbers used across turns.
+  
 
     ==================================================
     4. SCORING PROTOCOL (Likert Scale 1-5)
@@ -460,10 +514,10 @@ audit_engine:
     - 4: Materially correct; only minor non-financial claims lack a direct quote.
     - 1: A financial figure was invented or doesn't exist in any provided context.
 
-    [MATH_SCORE]
+    [MATH_HALLUCINATION_SCORE]
     - 5: All calculations match {math_info} and past results exactly. 
     - 4: Numbers are directly present and correct, but formula layout is simple.
-    - 1: The final number is wrong compared to the calculated truths or AI invented a number.
+    - 1: The final number is wrong compared to the calculated truths or AI invented a number. 
    
 
     [TRACEABILITY_SCORE]
@@ -471,17 +525,6 @@ audit_engine:
     - 3: Data is correct, but a page number is slightly off. (STILL A PASS)
     - 1: Citations point to data not found in the context history.
 
-    [DIVERGENCE_SCORE]
-    - Factual Validation of Findings-
-          5 (CORRECT FINDING): The Generator correctly identified a real divergence supported by evidence OR correctly identified that no divergence exists.
-
-          3 (WEAK ANALYSIS): The Generator found a conflict, but the evidence is thin or the rationale is vague.
-
-          1 (FALSE POSITIVE/HALLUCINATION): The Generator claimed a divergence (Score 5) but the 10-K and Transcript actually AGREE. This is a critical failure.
-
-          1 (MISSED CONFLICT): The Generator claimed "Perfect Alignment" (Score 1) but there is a clear, obvious contradiction in the evidence.
-              
-    - 5: (Type A/B) Default score.
 
     ==================================================
     5. OUTPUT CONTRACT (JSON ONLY)
@@ -490,14 +533,13 @@ audit_engine:
     {{
       "decision": "ACCEPT" | "REJECT",
       "reason": "Detailed explanation of why the report passed or failed.",
-      "err_type": "Math" | "Hallucination" | "Traceability" | "Incomplete" | "Divergence" | "Contradiction" | "Plan" | null,
+      "err_type": "Math" | "Hallucination" | "Traceability" | "Incomplete" | "Contradiction" | "Plan" | null,
       "exact_trace": "The exact offending text OR the specific missing claim from the report.",
       "expected": "What the correct data should have been based on EVIDENCE.",
       "action": "Direct imperative instruction for the Generator to fix the error.",
       "hallucination_score": <1-5>,
-      "math_score": <1-5>,
+      "math_hallucination_score": <1-5>,
       "traceability_score": <1-5>,
-      "divergence_score": <1-5>,
       "needs_revision": boolean,
       "critique": "Final summarized feedback for the generator."
     }}
@@ -529,29 +571,46 @@ compaction_node:
 
 
 query_purifier:
-  version: "v1.1.0"
+  version: "v1.2.0"
   query_purifier_prompt: |
-    You are an expert Audit Query Resolver. Your task is to prepare the user's query for the Planner.
-    
-    ### CONTEXT
-    - Conversation History: {history}
-    - Verified Facts (from already_verified_facts): {already_verified_facts}
-    - Current User Query: {current_query}
+  You are an expert Audit Query Resolver. Your task is to prepare the user's query for the Planner.
 
-    ### RULES
-    1. ENTITY IDENTIFICATION:
-       CRITICAL: Identify the Company Name  "nike" and Fiscal Year is there in the query or not.
-       - If they are missing and there is no Conversation History, you MUST trigger 'clarify' and ask for them.
-       - If they are present in the 'Current User Query', keep them exactly as written. NEVER replace them with placeholders.
+  ### CONTEXT
+  - Conversation History: {history}
+  - Current User Query: {current_query}
 
-    2. BRANCHING LOGIC:
-       - IF (Verified Facts is "NO_VERIFIED_FACTS") AND (Conversation History is "NO_HISTORY_AVAILABLE"):
-         - Action: 'rewrite'. 
-         - Result: Return the 'Current User Query' as-is in 'rewritten_query'.
-       - ELSE (If context exists):
-         - Use Rule 3 (Audit Logic) to refine the query.
+  ### RULES
+  1. ENTITY IDENTIFICATION:
+     CRITICAL: Identify the Company Name and Fiscal Year in the query.
+     - If they are missing and there is no Conversation History, you MUST trigger 'clarify' and ask for them.
+     - If they are present in the 'Current User Query', keep them exactly as written. NEVER replace them with placeholders.
+     - CRITICAL: **PRONOUN RESOLUTION:** "it", "this", or "the trend" refers to metrics in {history}, if present.
 
-    3. OUTPUT REQUIREMENTS:
-       - action: 'rewrite' OR 'clarify'.
-       - If 'rewrite', populate 'rewritten_query'.
-       - If 'clarify', populate 'clarification_question'.
+  2. BRANCHING LOGIC (check in this order):
+
+      STEP 1 — CHECK IF QUERY IS ALREADY SELF-CONTAINED:
+      If the current query already contains an explicit company name AND
+      an explicit fiscal year AND contains no pronouns needing resolution
+      (no "it", "this", "the trend", etc.) — the query needs no changes.
+      → action: pass
+      → Do NOT rewrite it. Do NOT call History resolution logic.
+      → This is the default, lowest-cost path — prefer it whenever the
+        query is already unambiguous on its own.
+
+      STEP 2 — IF NOT SELF-CONTAINED, CHECK HISTORY:
+      If history exists:
+        Look at the complete history to resolve missing company/year
+        or ambiguous pronouns, then rewrite.
+        Don't ask for clarification without first checking history.
+        → action: rewrite — return cleaned, fully resolved query
+
+      STEP 3 — IF STILL UNRESOLVED:
+      If history is empty AND company/year is missing:
+        → action: clarify — ask for the missing information
+
+  3. OUTPUT REQUIREMENTS:
+     - action: 'pass' or 'rewrite' or 'clarify'.
+     - If 'pass', return the original query unchanged 
+       (so downstream nodes always read from the same field).
+     - If 'rewrite', populate 'rewritten_query' with the fully resolved query.
+     - If 'clarify', populate 'clarification_question'.
