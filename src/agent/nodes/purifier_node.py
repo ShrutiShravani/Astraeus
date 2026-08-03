@@ -11,7 +11,8 @@ from src.utils.get_metrics import get_node_metrics
 from src.utils.monitoring import log_to_mlflow
 from src.utils.prompt_manager import PromptManager
 from custom_logging import logger
-
+from prometheus_client import Counter
+import re
 
 promptloader= PromptManager()
 
@@ -26,11 +27,16 @@ llm_gpt4o = ChatOpenAI(model="gpt-4o",streaming=True, temperature=0)
 
 # Resilient Brain for everyone
 resilient_brain = llm_mini.with_fallbacks([llm_gpt4o])
+llm_call_failures = Counter("purifier_llm_call_failures_total", "LLM invocation failures")
+validation_failures = Counter("purifier_validation_failures_total", "Output failed validation")
+max_attempts=2
 
 def prompt_purifier_node(state:AgentState):
     start_ts=time.time()
     current_query = state["query"]
     current_turn = state.get("turn_count", 0) + 1
+    YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
+    COMPANY=["Nike"]
     history = state.get("query_history", [])
    
     print("loading prompt")
@@ -53,29 +59,57 @@ def prompt_purifier_node(state:AgentState):
     structured_purifier = resilient_brain.with_structured_output(PurifierOutput,include_raw=True)
 
     purifier_prompt  = raw_template.format(
-        history=history[-1] if history else "No prior context",
+        history=history[-2] if len(history)>2 else history[-1] if len(history)==1 else "No prior context",
         current_query=current_query
 
         )
     
-    try:
-        response = structured_purifier.invoke(purifier_prompt,config={"callbacks": [perf_cb]})
+    response=None
+    for attempts in range(1, max_attempts + 1):
+        try:
+            response = structured_purifier.invoke(purifier_prompt,config={"callbacks": [perf_cb]})
+            break
 
-    except Exception:
-        logger.exception(
-            f"Planner LLM invocation failed | prompt_version={prompt_version}"
-        )
-        return {
-            "prompt_purifier_failed": True
-        }
-    
+        except Exception:
+                logger.exception(
+                    f"Planner LLM invocation failed | prompt_version={prompt_version}"
+                )
+                llm_call_failures.inc()
+                if attempts ==max_attempts:
+                    return {
+                         "prompt_purifier_failed": True
+                    }
+                
+            
     result = response["parsed"]
     print(result)
+    validation_flag=[]
+    if result.action in "pass" or "rewrite":
+        has_year=bool(YEAR_PATTERN.search(current_query))
+        has_company= any(company or company.lower() in current_query.lower() for company in COMPANY  )
+        
+        if not has_year or not has_company:
+            validation_flag.append("flag checks failed")
+
+
+    if validation_flag:
+        logger.warning(f"Purifier validation flags: {validation_flag} | query='{current_query}'")
+        validation_failures.inc()
+        return {
+                "ask_user": True,
+                "clarification_question": "Could you confirm the specific year and company for this question?",
+                "turn_count": current_turn,
+                "steps": [f"VALIDATION_FAILED: {validation_flag}"],
+        }
+
+
+
     metrics_getter= get_node_metrics("prompt_purifier",response,perf_cb,start_ts)
     
     
     node_results = metrics_getter(state)
     node_results["prompt_version"] = prompt_version
+    
     
     try:
         log_to_mlflow("prompt_purifier",node_results,step=current_turn)
@@ -91,10 +125,10 @@ def prompt_purifier_node(state:AgentState):
         "turn_count": current_turn,
 
         **node_results,
-        "steps": ["Clarifictaion required for query: " + state["query"],f"clarifictaion_question:{result.clarification_question}"]}
+        "steps": ["Clarification required for query: " + state["query"],f"clarifictaion_question:{result.clarification_question}"]}
     
     # Otherwise, return the rewritten query
-    elif result.action=="rewritten_query":
+    elif result.action=="rewrite":
         return {"query": result.rewritten_query, 
         "turn_count": current_turn,
 

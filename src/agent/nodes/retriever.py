@@ -11,10 +11,12 @@ from deepeval.metrics import ContextualPrecisionMetric, ContextualRelevancyMetri
 from deepeval.test_case import LLMTestCase
 from custom_logging import logger
 import mlflow
+from deepeval.test_case import LLMTestCase
 
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 ranker = Ranker(model_name="rank-T5-flan", cache_dir="~/.cache")
-
+MIN_RERANK_SCORE = 0.3  # tune empirically against your golden dataset
+ 
 #intialize redis
 #cache_client= redis.Redis(host='localhost', port=6379, db=0,decode_responses=True)
 
@@ -24,8 +26,10 @@ client = QdrantClient(url="http://localhost:6333")
 # Dense: For semantic meaning
 dense_encoder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
+
 # Sparse: For keyword precision (PP&E, 2018, etc.)
 sparse_encoder = SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1")
+relevancy_metric = ContextualRelevancyMetric(threshold=0.5, model="gpt-4o-mini")
 """
 def forensic_cache_key(state:AgentState):
     #combine key identifiers
@@ -91,12 +95,31 @@ def pre_filtering(initial_chunks, planner_tasks):
     # it still returns the 4 'best available' to prevent zero-chunk errors.
     return [item[1] for item in scored_chunks[:4]]
 """
+
+def check_contextual_relevancy(query: str, final_contexts: list) -> float:
+    if not final_contexts:
+        return 0.0
+    test_case = LLMTestCase(
+        input=query,
+        actual_output="",
+        retrieval_context=[c["evidence"] for c in final_contexts],
+    )
+
+    try:
+        relevancy_metric.measure(test_case)
+        return relevancy_metric.score
+    except Exception as e:
+        logger.warning(f"Relevancy metric failed to compute: {e}")
+        return None
+
 def hybrid_retriever_node(state: AgentState):
     start_ts = time.time()
     query = state["query"]
-    failed_tasks = state.get("failed_tasks", [])
-    print("rotuihn  retrierv")
-    plan = failed_tasks if failed_tasks else state.get("plan", [])
+
+    if state.get("is_follow_up"):
+        plan= state.get("follow_up_tasks",[]) #MATCH TASK TOR ETRIER WIHT PALNEN RTASK AND PASS
+    else:
+        plan =  state.get("plan", [])
     current_turn = state.get("turn_count", 0) + 1
     target_company = str(state.get("target_company", "")).upper()
     target_year = state.get("target_year")
@@ -125,6 +148,8 @@ def hybrid_retriever_node(state: AgentState):
      
 
     for task_obj in plan:
+        if task_obj.doc_source == "NONE":
+            continue
         search_string = task_obj.title
         task_company = task_obj.extracted_company
         print(task_company)
@@ -150,27 +175,33 @@ def hybrid_retriever_node(state: AgentState):
             filter_conditions.append(
                 models.FieldCondition(key="metadata.doc_type", match=models.MatchValue(value=task_obj.doc_source))
             )
-  
-        # Embeddings
-        dense_vector = list(dense_encoder.embed(search_string))[0].tolist()
-        sparse_result = list(sparse_encoder.embed([search_string]))[0]
-        sparse_vector = models.SparseVector(
-            indices=sparse_result.indices.tolist(), 
-            values=sparse_result.values.tolist()
-        )
         
-        # Search with RRF Fusion
-        search_result = client.query_points(
+        try:
+            # Embeddings
+            dense_vector = list(dense_encoder.embed(search_string))[0].tolist()
+            sparse_result = list(sparse_encoder.embed([search_string]))[0]
+            sparse_vector = models.SparseVector(
+                indices=sparse_result.indices.tolist(), 
+                values=sparse_result.values.tolist()
+            )
+        except Exception as e:
+            logger.exception(e) 
+            return {
+            "retriever_failed": True
+        } 
+        
+        
+        
+        try:
+            search_result = client.query_points(
             collection_name="financial_reports",
             prefetch=[
-                models.Prefetch(query=dense_vector, using="dense", limit=150),
-                models.Prefetch(query=sparse_vector, using="sparse", limit=150)
+                models.Prefetch(query=dense_vector, using="dense", limit=100),
+                models.Prefetch(query=sparse_vector, using="sparse", limit=100)
             ],
             query=models.FusionQuery(fusion=models.Fusion.RRF),
             query_filter=models.Filter(must=filter_conditions)
         )
-        
-        try:
             for point in search_result.points: 
                 if point.id not in seen_ids:
                     payload =point.payload
@@ -199,6 +230,7 @@ def hybrid_retriever_node(state: AgentState):
                     
                     all_contexts.append({
                         "id": point.id,
+                        "source_task_title": task_obj.title,
                         "source": p_source,
                         "company": p_company, # Explicitly pass these for pre_filtering
                         "year": p_year,#
@@ -221,13 +253,36 @@ def hybrid_retriever_node(state: AgentState):
     # --- 4. RERANKING ---
     if not all_contexts:
         print("WARNING: No contexts found in Qdrant. Skipping rerank.")
-        top_chunks = []
-        
+    
+    top_chunks = []
+    final_contexts=[] 
     try:
-        rerank_request = RerankRequest(query=rerank_query, passages=all_contexts)
-        # Return top 8 to ensure we catch enough rows from large tables
-        #limit=12 if len(search_tasks)>1 else 8
-        top_chunks = ranker.rerank(rerank_request)[:10]
+        for task_obj in plan:
+            task_chunks=[c for c in all_contexts if c["source_task_title"] == task_obj.title]
+            if not task_chunks:
+                    continue 
+ 
+            rerank_request = RerankRequest(query=rerank_query, passages=task_chunks)
+            # Return top 8 to ensure we catch enough rows from large tables
+            #limit=12 if len(search_tasks)>1 else 8
+            reranked = ranker.rerank(rerank_request)
+            top_chunks=[c for c in reranked if c["score"]>=MIN_RERANK_SCORE][:2]
+            if not top_chunks:
+                logger.warning(
+                    f"All reranked chunks fell below MIN_RERANK_SCORE={MIN_RERANK_SCORE} "
+                    f"-- no chunk was confidently relevant."
+                )
+            for chunk in top_chunks:
+                entry={
+                "company": chunk["company"], # Use the one tagged during retrieval
+                "year": chunk["year"],
+                "source":chunk["source"],
+                "page": chunk["page"],
+                "evidence":chunk["text"]
+            }  
+                final_contexts.append(entry)
+                print(f"length of initial_contexts:{len(final_contexts)}")
+            
     except Exception as e:
             logger.exception(e)
             return {
@@ -236,25 +291,11 @@ def hybrid_retriever_node(state: AgentState):
     
 
 
-    initial_contexts = []
-    final_contexts=[]
-    entry={}
-    for chunk in top_chunks:
-        entry={
-        "company": chunk["company"], # Use the one tagged during retrieval
-        "year": chunk["year"],
-        "source":chunk["source"],
-        "page": chunk["page"],
-        "evidence":chunk["text"]
-    }  
-        final_contexts.append(entry)
-        print(f"length of initial_contexts:{len(final_contexts)}")
-    
     #final_contexts = pre_filtering(initial_contexts, plan)
     print(f"[DEBUG] final_cotnexts_count:{len(final_contexts)}")
     print(f"[DEBUG] {[c['source']for c in final_contexts]}")
     print(f"[RETRIEVAL DEBUG] Sources: {[(c['source'], c['year'], c['page']) for c in final_contexts]}")
-
+    relevancy_score = check_contextual_relevancy(query, final_contexts)
 
     for i, ctx in enumerate(final_contexts):
         print(f"\n[CHUNK {i}]")
@@ -262,6 +303,7 @@ def hybrid_retriever_node(state: AgentState):
         # Show first 200 chars — does it contain the metric?
         print(f"  Content preview: {ctx['evidence'][200:400]}")
         print(f"{'='*50}\n")
+
 
  
     node_latency = time.time() - start_ts
@@ -276,6 +318,7 @@ def hybrid_retriever_node(state: AgentState):
                 "cost": 0.0,
                 "model": "hybrid-search-engine",
                 "tps": 0,
+                "contextual_relevancy_score": relevancy_score
             }
         }
     }

@@ -28,7 +28,8 @@ llm_mini = ChatOpenAI(model="gpt-4.1-mini",streaming=True,
 # 2. THE CHAIN OF COMMAND
 # For heavy tasks (Generator/Auditor): 
 # Try GPT-4o -> Try Snapshot -> Try Mini (Fail-safe)
-resilient_pro = llm_pro.with_fallbacks([llm_pro_snap, llm_mini])
+resilient_pro = llm_pro_snap.with_fallbacks([llm_mini])
+max_attempts=2
 
 async def query_aware_compression(context,query):
     """
@@ -72,6 +73,14 @@ async def retrieval_auditor_node(state:AgentState):
     #compressed_evidence= await query_aware_compression(context,current_query)
     #print(f"compressed_evidence_summary:{compressed_evidence}")
 
+    context_by_task={}
+    for chunk in context:
+        tid=chunk.get("task_id", "UNTAGGED")
+        context_by_task.setdefault(tid, []).append(chunk)
+    
+    grouped_context_text = "\n\n".join([f"=== EVIDENCE FOR TASK_ID: {tid} ===\n" +
+    "\n".join([c["evidence"] for c in chunks])for tid, chunks in context_by_task.items()])
+
     try:
         node_config = promptloader.prompts.get('retriever_auditor', {})
 
@@ -88,24 +97,27 @@ async def retrieval_auditor_node(state:AgentState):
 
     prompt = raw_template.format(
         planner_tasks=planner_tasks, 
-        context=context,
+        context=grouped_context_text
     )
-    print(f"!!! DISPATCHING: {planner_tasks.title}")
+
+    print(f"!!! DISPATCHING {len(plan)} task(s): {[t.title for t in plan]}")
   
     # .ainvoke is the ASYNC version of .invoke
-    try:
-        response = await structured_llm.ainvoke(
-            prompt, 
-            config={"callbacks": [perf_cb]}
-        )
-        print(f"DEBUG: Task {planner_tasks.title} finished at {time.time()}")
-    except Exception:
-        logger.exception(
-            f"Retrieval Auditor LLM invocation failed | prompt_version={prompt_version}"
-        )
-        return {
-            "retrieval_auditor_failed": True
-        }
+    for attempts in range(1, max_attempts + 1):
+        try:
+            response = await structured_llm.ainvoke(
+                prompt, 
+                config={"callbacks": [perf_cb]}
+            )
+            print(f"DEBUG: Task {planner_tasks.title} finished at {time.time()}")
+            break
+        except Exception:
+            logger.exception(
+                f"Retrieval Auditor LLM invocation failed | prompt_version={prompt_version}"
+            )
+            return {
+                "retrieval_auditor_failed": True
+            }
  
 
     # 3. MERGE THE RESULTS
@@ -118,9 +130,29 @@ async def retrieval_auditor_node(state:AgentState):
   
 
     found_evidence_list = output.found_evidence
+    
+    retrieval_auditor_sample_log = []
     missin_task=[]
-
+    valid_source_page_pairs = {(c["source"], c["page"]) for c in context}
+    
     for item in found_evidence_list:
+        if (item.source, item.page) not in valid_source_page_pairs:
+            logger.warning(
+                f"Citation hallucination suspected: task='{item.task_name}' "
+                f"cited source='{item.source}' page='{item.page}', "
+                f"which was never in the retrieved context."
+            )
+            item.status = "missing"
+        
+        retrieval_auditor_sample_log.append({
+        "node": "retrieval_auditor",
+        "turn": current_turn,
+        "task_name": item.task_name,
+        "evidence": item.evidence,
+        "source": item.source,
+        "page": item.page,
+        "status": item.status,
+    })
         print(f"Verified:{item.task_name} | {item.company} | {item.year} | {item.evidence} in {item.source} p.{item.page}")
         evidence_found.append(item)
     
@@ -129,6 +161,14 @@ async def retrieval_auditor_node(state:AgentState):
         if item.status=="missing":
             missin_task.append(item.task_name)
     
+    evidence_found = []
+
+
+    for item in found_evidence_list:
+        item.status = item.status.lower()
+        if item.status!= "missing":
+            evidence_found.append(item) 
+            
     failed_tasks=[task for task in plan if task.title in missin_task]
     if failed_tasks:
         print(f"missing task:{failed_tasks}")
@@ -164,6 +204,7 @@ async def retrieval_auditor_node(state:AgentState):
   
     return{
         "turn_count": current_turn,
+        "retrieval_auditor_sample_log": retrieval_auditor_sample_log,
         "audit_wiki":evidence_found,
         "failed_tasks":failed_tasks,
         **node_results,

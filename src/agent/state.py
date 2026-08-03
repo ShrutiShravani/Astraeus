@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field,ConfigDict
 import operator
 import operator
 from typing import Annotated, TypedDict, Dict, Any, Union
-
+import uuid
 
 def merge_node_metrics(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
     return {**old, **new}
@@ -33,7 +33,7 @@ class EvidenceFound(BaseModel):
   
 class Retriever_feedback(BaseModel):
     needs_revision:bool= Field(description="Simple rule: FALSE = all tasks in found_evidence have status FOUND or TRUE = at least one task has status MISSING. No other logic applies.")
-    retriever_critique:str= Field(description="MUST contain ALL planner tasks — both FOUND and MISSING. Missing tasks have status=MISSING,source=NOT_IN_CONTEXT, page=N/A,evidence=NOT FOUND IN CONTEXT")
+    retriever_critique:str= Field(description="must ONLY state: which task(s) are missing, and the specific reason evidence wasn't found")
     found_evidence: List[EvidenceFound] = Field(description="List of all verified data points found in context")
     
     
@@ -152,6 +152,25 @@ class ForensicArchive(BaseModel):
 class FinalGeneration(BaseModel):
     report: str = Field(description="The full markdown audit report")
 
+class TaskClassification(BaseModel):
+    matched_task_title: str = Field(
+        description=(
+            "The EXACT title of the task being classified, copied verbatim "
+            "character-for-character from the PLANNER TASKS list. Do not "
+            "paraphrase, shorten, or reword it -- this is used for exact "
+            "matching back to the original task downstream."
+        )
+    )
+    status: Literal["answered", "needs_retrieval"]
+    matched_wiki_fact: str = Field(
+        default="",
+        description="If status is 'answered', the specific verified fact that matched. Empty if needs_retrieval.",
+    )
+ 
+ 
+class FollowUpOutput(BaseModel):
+    classifications: List[TaskClassification]
+
 
 class PurifierOutput(BaseModel):
     action: Literal["rewrite", "clarify","pass"]
@@ -186,7 +205,11 @@ class AgentState(TypedDict):
     audit_wiki: Annotated[list, operator.add]
     # The KNOWLEDGE BASE (Appends automatically)
     context_history: Annotated[list, operator.add]
+    task_to_retrieve:List[Task]
+    follow_up_sample_log:List[Dict]
+    retrieval_auditor_sample_log:List[Dict]
     is_follow_up:str
+    follow_up_tasks:List[Task]
     is_investigate:bool
     start_time:float
     is_cached:bool

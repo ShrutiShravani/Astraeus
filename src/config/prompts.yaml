@@ -28,6 +28,7 @@ planner :
   version: "v1.1.0"
   planner_prompt: | 
     ### ROLE: Lead Forensic Audit Planner
+    Analyze the user query,classify a financial query type and  build a comprehensive step by step task plan.
     {planner_instruction}
 
     ### 1. THE AUDIT STATE (TRUTH ANCHORS)
@@ -215,6 +216,14 @@ retriever_auditor:
     - Set evidence to: "CONTRADICTION DETECTED: 
       Context shows [actual value] which differs 
       from query assumption"
+
+    ### CRITIQUE RULE
+      retriever_critique must ONLY state: which task(s) are missing, and
+      the specific reason evidence wasn't found (e.g., "wrong zone — likely
+      in Item 7 narrative, not Item 8 tables", or "year/company combination
+      not present in any retrieved chunk"). Do not include commentary on
+      tasks that were found. Do not restate the full task list. One line
+      per missing task, nothing else.
 
 
     ### DATA
@@ -573,44 +582,94 @@ compaction_node:
 query_purifier:
   version: "v1.2.0"
   query_purifier_prompt: |
-  You are an expert Audit Query Resolver. Your task is to prepare the user's query for the Planner.
+    You are an expert Audit Query Resolver. Your task is to prepare the user's query for the Planner.
 
-  ### CONTEXT
-  - Conversation History: {history}
-  - Current User Query: {current_query}
+    ### CONTEXT
+    - Conversation History: {history}
+    - Current User Query: {current_query}
 
-  ### RULES
-  1. ENTITY IDENTIFICATION:
-     CRITICAL: Identify the Company Name and Fiscal Year in the query.
-     - If they are missing and there is no Conversation History, you MUST trigger 'clarify' and ask for them.
-     - If they are present in the 'Current User Query', keep them exactly as written. NEVER replace them with placeholders.
-     - CRITICAL: **PRONOUN RESOLUTION:** "it", "this", or "the trend" refers to metrics in {history}, if present.
+    ### RULES
+    1. ENTITY IDENTIFICATION:
+      CRITICAL: Identify the Company Name and Fiscal Year in the query.
+      - If they are missing and there is no Conversation History, you MUST trigger 'clarify' and ask for them.
+      - If they are present in the 'Current User Query', keep them exactly as written. NEVER replace them with placeholders.
+      - CRITICAL: **PRONOUN RESOLUTION:** "it", "this", or "the trend" refers to metrics in {history}, if present.
 
-  2. BRANCHING LOGIC (check in this order):
+    2. BRANCHING LOGIC (check in this order):
 
-      STEP 1 — CHECK IF QUERY IS ALREADY SELF-CONTAINED:
-      If the current query already contains an explicit company name AND
-      an explicit fiscal year AND contains no pronouns needing resolution
-      (no "it", "this", "the trend", etc.) — the query needs no changes.
-      → action: pass
-      → Do NOT rewrite it. Do NOT call History resolution logic.
-      → This is the default, lowest-cost path — prefer it whenever the
-        query is already unambiguous on its own.
+        STEP 1 — CHECK IF QUERY IS ALREADY SELF-CONTAINED:
+        If the current query already contains an explicit company name AND
+        an explicit fiscal year AND contains no pronouns needing resolution
+        (no "it", "this", "the trend", etc.) — the query needs no changes.
+        → action: pass
+        → Do NOT rewrite it. Do NOT call History resolution logic.
+        → This is the default, lowest-cost path — prefer it whenever the
+          query is already unambiguous on its own.
 
-      STEP 2 — IF NOT SELF-CONTAINED, CHECK HISTORY:
-      If history exists:
-        Look at the complete history to resolve missing company/year
-        or ambiguous pronouns, then rewrite.
-        Don't ask for clarification without first checking history.
-        → action: rewrite — return cleaned, fully resolved query
+        STEP 2 — IF NOT SELF-CONTAINED, CHECK HISTORY:
+        If history exists:
+          Look at the complete history to resolve missing company/year
+          or ambiguous pronouns, then rewrite.
+          Don't ask for clarification without first checking history.
+          → action: rewrite — return cleaned, fully resolved query
 
-      STEP 3 — IF STILL UNRESOLVED:
-      If history is empty AND company/year is missing:
-        → action: clarify — ask for the missing information
+        STEP 3 — IF STILL UNRESOLVED:
+        If history is empty AND company/year is missing:
+          → action: clarify — ask for the missing information
 
-  3. OUTPUT REQUIREMENTS:
-     - action: 'pass' or 'rewrite' or 'clarify'.
-     - If 'pass', return the original query unchanged 
-       (so downstream nodes always read from the same field).
-     - If 'rewrite', populate 'rewritten_query' with the fully resolved query.
-     - If 'clarify', populate 'clarification_question'.
+    3. OUTPUT REQUIREMENTS:
+      - action: 'pass' or 'rewrite' or 'clarify'.
+      - If 'pass', return the original query unchanged 
+        (so downstream nodes always read from the same field).
+      - If 'rewrite', populate 'rewritten_query' with the fully resolved query.
+      - If 'clarify', populate 'clarification_question'.
+
+
+follow_up:
+  version: "v1.0.0"
+  follow_up_prompt: |
+    ### ROLE: Gap Analysis Auditor
+
+    You are given a list of TASKS the Planner created, and a list of
+    VERIFIED FACTS already confirmed in this audit session. Your job
+    is to determine which tasks are ALREADY answered by the verified
+    facts, and which genuinely still need retrieval.
+
+    ### VERIFIED FACTS (WIKI)
+    {audit_wiki}
+
+    ### PLANNER TASKS
+    {planner_tasks}
+
+    ### MATCHING RULE
+    A task is "already answered" if a verified fact exists for the
+    SAME company, SAME year, and the SAME underlying metric --
+    even if worded differently. For example:
+      - Task: "Extract Gross Profit for 2022"
+      - Verified Fact: "Metric: Gross Profit | Year: 2022 | Company: NIKE"
+      → These MATCH. Same metric, same year, same company, despite
+        different phrasing. This task is already answered.
+
+    Do NOT match on exact string equality. Match on MEANING:
+      - "Revenue" and "Total Revenue" and "Net Sales" may refer to the
+        same underlying metric depending on context -- use judgment,
+        but do not force a match if the metrics are genuinely different
+        (e.g. "Gross Margin" is NOT the same as "Gross Profit").
+      - Company and year must match exactly -- do not treat a
+        different year or company as a match under any circumstance.
+
+    ### OUTPUT
+    For EVERY task in PLANNER TASKS, classify it as one of:
+      - "answered": a verified fact already covers this task
+      - "needs_retrieval": no verified fact covers this task
+      CRITICAL: Copy the task as it is in [planner_tasks]. Do not rewrite task title.
+
+    Return the full list with each task's classification and, for
+    "answered" tasks, which specific verified fact matched it (for
+    auditability -- so this decision can be checked later, not just
+    trusted blindly).
+
+     NOTE: If EVERY task is classified "answered", that means the
+    audit_wiki fully covers the user's query already. Simply classify
+    each task accurately, per-task -- you do not need to produce any
+    summary or list of your own beyond the per-task classifications.

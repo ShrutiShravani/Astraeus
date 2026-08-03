@@ -111,9 +111,8 @@ def unified_generator_node(state: AgentState):
             ### FOLLOW-UP INVESTIGATION PROTOCOL (TURN 2+):
             You are now in a multi-turn audit. The context includes previous findings.
             
-            **TASK DIFFERENTIATION**: 
-            - If no [planner_tasks] exists , use [query_history] to understand user query  and answer using [final_context_str].
-            - If there are active task exists in the [planner_tasks]  ,use both [query_history] and [planner_tasks] to understand user query and then answer using [final_context_str] .
+            **critical**: 
+             Use both [query_history] and [planner_tasks] to understand user query and then answer using [final_context_str] .
             
         """
 

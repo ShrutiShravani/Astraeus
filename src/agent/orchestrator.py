@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph,END,START
 from typing import TypedDict, List, Annotated
 import operator
+from src.agent.nodes import follow_up_node
 from src.agent.nodes.auditor import auditor_node
 from src.agent.nodes.semantic_cache_nodes import semantic_cache_check_node,finalize_audit
 from src.agent.nodes.retriever import hybrid_retriever_node
@@ -18,6 +19,7 @@ from src.agent.state import AgentState
 from src.agent.nodes.retrieval_auditor import retrieval_auditor_node
 from src.agent.nodes.divergence_analyst import divergence_analyst_node
 from src.agent.nodes.human_node import user_node
+from src.agent.nodes.follow_up_node import follow_up_node
 
 def route_after_auditor(state:AgentState):
     if state.get("audit_engine_failed"):
@@ -50,12 +52,17 @@ def route_after_planner(state: AgentState):
         return "human_review"
     elif state.get("target_node")=="END":
         return "end"
-    elif  len(state["plan"])==0:
-        print("--- ROUTE: Direct to Generator (Wiki Match) ---")
-        return "generator"
     if state.get("planner_failed"):
         return "end"      # or planner_failure_node
-    
+    if state.get("is_follow_up"):
+        return "follow_up"
+    return "retriever"
+
+def route_after_follow_up(state):
+    if state.get("gap_analysis_failed"):
+        return "end"
+    elif state.get("follow_up_tasks:"):
+        return "generator"
     return "retriever"
 
 def route_after_prompt_purifier(state):
@@ -80,7 +87,7 @@ def route_after_retriever_auditor(state: AgentState):
         if attempts > 3:
             return "human_review"  # max attempts reached
         if failed_tasks:
-            return "retriever"     # retry with failed tasks
+            return "planner"     # retry with failed tasks
         
     return "extractor"
 
@@ -155,6 +162,7 @@ workflow.add_node("human_review", human_review_node)
 workflow.add_node("cache_add",finalize_audit)
 workflow.add_node("user_auditor",auditor_node)
 workflow.add_node("human_wait",user_node)
+workflow.add_node("follow_up",follow_up_node)
 
 workflow.add_edge("human_wait", "guard")
 
@@ -177,6 +185,17 @@ workflow.add_conditional_edges(
     {
         "generator": "generator",
         "end": END
+    }
+)
+
+workflow.add_conditional_edges(
+    "follow_up",
+    # We use a lambda to check the boolean and return the routing string
+    route_after_follow_up,
+    {
+        "retriever": "retriever",
+        "generator":"genertaor",
+        "unsafe": END
     }
 )
 
@@ -259,7 +278,7 @@ workflow.add_conditional_edges(
     route_after_planner,
     {    
         "retriever": "retriever",
-        "generator":"generator",
+        "follow_up":"follow_up",
         "human_review":"human_review",
         "end": END
     }

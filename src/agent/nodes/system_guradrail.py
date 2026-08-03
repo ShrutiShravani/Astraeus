@@ -40,6 +40,8 @@ llm_gpt4o = ChatOpenAI(
 
 resilient_brain = llm_mini.with_fallbacks([llm_gpt4o])
 
+max_attempts=2
+
 def system_1_guard(state:AgentState):
     start_ts = time.time()
     user_query = state["query"]
@@ -78,7 +80,7 @@ def system_1_guard(state:AgentState):
                 )
             except Exception as e:
                 logger.warning(f"MLflow metric logging failed: {e}")
-            return {"is_safe":False,"security_log":f"Heuristic trigger:{pattern}"}
+            return {"is_safe":False}
     
     for pattern in jailbreakpatterns:
         if re.search(pattern,user_query.lower()):
@@ -105,26 +107,26 @@ def system_1_guard(state:AgentState):
     user_message=f"Please analyze this input for security: <user_input>{user_query}</user_input>"
 
     structure_llm= resilient_brain.with_structured_output(SecurityRating,include_raw=True)
-
-    try:
     
-        assessment = structure_llm.invoke(
-        [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_message)
-        ],
-        config={"callbacks": [perf_cb]}
-        )
-    except Exception as e:
-        logger.error(f"Guardrail LLM failed: {e}")
-        return {
-        "is_safe": False,
-        "security_log": "Security service unavailable.",
-        "turn_count": current_turn,
-        "prompt_version": prompt_version,
-        "steps": ["Security Guard: Failed"]
-    }
-
+    for attempts in range(1, max_attempts + 1):
+        try:
+            assessment = structure_llm.invoke(
+                [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_message)
+                ],
+                config={"callbacks": [perf_cb]}
+            )
+            break
+        except Exception:
+            logger.exception(
+                f"Guardrail LLM invocation failed | prompt_version={prompt_version}"
+            )
+            if attempts ==max_attempts:
+                return {
+                    "is_safe": False,
+                    "security_log": "This request could not be processed"
+                }
     plan_output = assessment["parsed"]
 
     detection = 1 if not plan_output.is_safe else 0

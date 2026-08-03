@@ -13,6 +13,7 @@ from src.utils.prompt_manager import PromptManager
 from custom_logging import logger
 
 
+
 promptloader= PromptManager()
 
 perf_cb=PerformanceCallback()
@@ -26,31 +27,48 @@ llm_gpt4o = ChatOpenAI(model="gpt-4o",streaming=True, temperature=0)
 
 # Resilient Brain for everyone
 resilient_brain = llm_mini.with_fallbacks([llm_gpt4o])
+max_attempts=2
 
 def planner_node(state:AgentState):
     start_ts=time.time()
-    current_query = state["query"]
+    failed_tasks = state.get("failed_tasks", [])
+    current_query = failed_tasks if failed_tasks else state["query"]
     current_turn = state.get("turn_count", 0) + 1
     history = state.get("query_history", [])
     prev_company = state.get("target_company",[])
     print(prev_company)
     prev_year = state.get("target_year",[])
     print(prev_year)
-    #current_existing_report = state.get("report_history", "")
-    is_follow_up=state.get("is_follow_up")
-    planner_instruction = ""
-
-    if state.get("human_decision") == "is_investigate":
-        # Keep only the relevant context
-        history = [history] if history else []  
-        planner_instruction = f"INVESTIGATE MODE:You are analyzing a thread of financial investigation.History of queries {history}.This was for {prev_company} {prev_year}."
-      
-    else:
-        history = [] # Clean slate
-        planner_instruction = "You are starting a fresh forensic audit."
-
+    
     retrieved_feedback= state.get("retriever_feedback",[])
     print(retrieved_feedback)
+  
+    if retrieved_feedback:
+        critique_text = getattr(retrieved_feedback, "retriever_critique", "") or "No specific critique provided."
+        failed_titles = ", ".join([t.title for t in failed_tasks]) if failed_tasks else "the previously failed tasks"
+ 
+        planner_instruction += f"""
+    
+        RETRY MODE — PRIOR RETRIEVAL FAILED FOR SOME TASKS:
+        The following task(s) could not be found in the last retrieval
+        attempt: {failed_titles}
+    
+        Auditor feedback on why retrieval failed:
+        "{critique_text}"
+    
+        RULES FOR THIS RETRY:
+        - Create tasks ONLY for the failed task(s) listed above. 
+        - Use the auditor's feedback to adjust HOW you search, not just
+        repeat the same failed task unchanged. For example: if the
+        feedback suggests the metric is discussed narratively rather
+        than in a table, change `zone` from "Item 8" to "Item 7".
+        If it suggests management commentary rather than filed
+        numbers, consider `doc_source="Transcript"` instead of "10K".
+        - Keep extracted_company and extracted_year the same as before
+        UNLESS the feedback specifically indicates they were wrong.
+        """
+
+    
     try:
         node_config = promptloader.prompts.get('planner', {})
         raw_template = node_config.get('planner_prompt')
@@ -66,50 +84,7 @@ def planner_node(state:AgentState):
 
     audit_wiki=state.get("audit_wiki",[])
     already_verified_facts= ",".join([f"Year: {item.year} | Company: {item.company} | Task: {item.task_name} | Evidence :{item.evidence} in {item.source} p.{item.page}"for item in audit_wiki])
-    
-        
-    if is_follow_up:
 
-        planner_instruction = f"""
-        FOLLOW-UP MODE: GAP ANALYSIS
-
-        CURRENT STATE:
-        - Verified Facts: {already_verified_facts}
-        - User Query: {current_query}
-
-        RULES:
-
-            YOUR ONLY JOB:
-            Compare the USER QUERY against VERIFIED FACTS.
-
-            STEP 1 — CHECK WIKI FIRST:
-            For each metric the query needs, check if it 
-            exists in VERIFIED  FACTS with the exact 
-            company and year.
-
-            STEP 2 — DECIDE:
-            A) If ALL needed metrics are in the verified facts:
-            → return an empty task list []. Do not re-retrieve data you already possess.
-            → This tells the system to calculate from wiki
-
-            B) If SOME metrics are missing from verified facts:
-            → Create tasks ONLY for the missing metrics
-            → Do NOT create tasks for metrics already in verified facts
-
-            C) If query asks for a ratio (margin, growth rate):
-            → Check if components are in verified facts
-            → If yes → return an empty task list[]
-            → If no → create tasks for missing components only
-
-            STRICT RULE: 
-            If a metric + year + company combination exists 
-            in VERIFIED FACTS, you are FORBIDDEN from 
-            creating a retrieval task for it. Violation = 
-            wasted compute and audit failure.
-            """
-
-    else:
-        planner_instruction=f"Analyze the user query,classify a financial query type and  build a comprehensive step by step task plan."
         
     if len(history) > 5:
         print("length exceeded")
@@ -130,15 +105,18 @@ def planner_node(state:AgentState):
 
    
     # Invoke the LLM directly with the string
-    try:
-        raw_result = structured_planner.invoke(planner_prompt,config={"callbacks": [perf_cb]})
-    except Exception:
-        logger.exception(
-            f"Planner LLM invocation failed | prompt_version={prompt_version}"
-        )
-        return {
-            "planner_failed": True
-        }
+    for attempts in range(1, max_attempts + 1):
+        try:
+            raw_result = structured_planner.invoke(planner_prompt,config={"callbacks": [perf_cb]})
+            break
+        except Exception:
+            logger.exception(
+                f"Planner LLM invocation failed | prompt_version={prompt_version}"
+            )
+            if attempts ==max_attempts:
+                return {
+                    "planner_failed": True
+                }
 
 
     # 5. Extracting data from the 'include_raw' format
